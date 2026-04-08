@@ -1549,27 +1549,11 @@ function DamagedTab({ t, components, form, setForm, records, run, api, refreshAl
 
 function ReportsTab({ t, reportParams, setReportParams, reportData, setReportData, reportQuery, run }) {
   async function exportCsv() {
-    const response = await fetch(`${api.baseUrl}/reports/sales.csv${reportQuery}`, {
-      credentials: "include",
-    });
-
-    if (!response.ok) {
-      const contentType = response.headers.get("content-type") || "";
-      const payload = contentType.includes("application/json")
-        ? await response.json()
-        : await response.text();
-      const error = new Error(typeof payload === "string" ? payload : payload.error || "Export failed");
-      error.status = response.status;
-      throw error;
-    }
-
-    const blob = await response.blob();
+    const csv = await api.get(`/reports/sales.csv${reportQuery}`);
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
     const url = window.URL.createObjectURL(blob);
     const link = document.createElement("a");
-    const filename =
-      response.headers
-        .get("content-disposition")
-        ?.match(/filename="?([^"]+)"?/)?.[1] || "sales-report.csv";
+    const filename = `sales-report-${reportParams.period}.csv`;
     link.href = url;
     link.download = filename;
     document.body.appendChild(link);

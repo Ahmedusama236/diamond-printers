@@ -78,6 +78,23 @@ Backend default URL: `http://localhost:4000`
 
 The Express server serves the built React app from `client/dist` at `/app` and redirects `/` to `/app`.
 
+## Deploy With Vercel + Supabase
+This repo now includes a frontend-only deployment path for free personal hosting:
+- Create a Supabase project
+- Run [schema.sql](/d:/Diamond printer/supabase/schema.sql) in the Supabase SQL editor
+- Copy [client/.env.example](/d:/Diamond printer/client/.env.example) to `client/.env` and fill in:
+  - `VITE_SUPABASE_URL`
+  - `VITE_SUPABASE_ANON_KEY`
+- Push to GitHub
+- Import the repo into Vercel
+- Vercel reads [vercel.json](/d:/Diamond printer/vercel.json)
+
+Important:
+- The hardcoded app login remains:
+  - username: `ahmed`
+  - password: `123456789`
+- The Supabase policies in `schema.sql` are intentionally open for simple personal use. Do not use this setup for sensitive multi-user production data.
+
 ## Deploy On Render
 1. Push the project to GitHub.
 2. In Render, create a new `Web Service` from the GitHub repo.
