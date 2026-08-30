@@ -5,7 +5,7 @@ Local-first manufacturing management system for Diamond Printers.
 ## Stack
 - Frontend: React + Vite
 - Backend: Node.js + Express
-- Web database: Neon Postgres through the Neon Data API
+- Web database: Neon Postgres through a Vercel Serverless Function
 - Local/desktop backend: SQLite (`node:sqlite`)
 - Timezone rules: `Africa/Cairo`
 - Currency: `EGP`
@@ -80,32 +80,27 @@ Backend default URL: `http://localhost:4000`
 The Express server serves the built React app from `client/dist` at `/app` and redirects `/` to `/app`.
 
 ## Deploy With Vercel + Neon
-This repo includes a frontend-only deployment path using the Neon Data API:
+The web app uses a Vercel Serverless Function so the database password never
+ships to the browser:
 
 1. Create a Neon project and database.
-2. In Neon, provision the Data API for the branch. Enable the option that grants
-   public-schema access to the Data API roles.
-3. Run [neon/schema.sql](neon/schema.sql) in the Neon SQL Editor.
-4. Copy [client/.env.example](client/.env.example) to `client/.env` for local web
-   development and set:
-   - `VITE_NEON_DATA_API_URL` to the Data API endpoint shown by Neon (including
-     `/rest/v1` when it is part of the displayed endpoint).
-5. In Vercel, add the same `VITE_NEON_DATA_API_URL` under Project Settings >
-   Environment Variables.
-6. Push to GitHub and import the repository into Vercel. Vercel reads
+2. Run [neon/schema.sql](neon/schema.sql) in the Neon SQL Editor.
+3. Connect the Neon project to the Vercel project. The integration supplies
+   `DATABASE_URL` to Vercel automatically. Alternatively, add `DATABASE_URL`
+   manually in Vercel Project Settings > Environment Variables.
+4. Push to GitHub and import the repository into Vercel. Vercel reads
    [vercel.json](vercel.json).
 
-Do not put the Neon PostgreSQL connection string (`DATABASE_URL`) in a `VITE_*`
-variable. The browser only needs the Data API endpoint.
+Never put `DATABASE_URL` in a `VITE_*` variable. It is read only by
+[api/data.js](api/data.js) on the server.
 
 Important:
 - The hardcoded app login remains:
   - username: `ahmed`
   - password: `123456789`
-- The Neon Data API policies in `schema.sql` are intentionally open for simple
-  personal use, matching the previous behavior. The hardcoded login is only a UI
-  gate; use Neon Auth/JWT and user-scoped RLS before storing sensitive or multi-user
-  production data.
+- The database endpoint is intentionally simple for personal use, matching the
+  previous behavior. The hardcoded login is only a UI gate; add server-side
+  authentication before storing sensitive or multi-user production data.
 
 ## Deploy On Render
 1. Push the project to GitHub.

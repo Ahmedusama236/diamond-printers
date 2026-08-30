@@ -1,5 +1,6 @@
 import { DateTime } from "luxon";
-import { requireNeon } from "./neonClient";
+
+const DATA_API_URL = import.meta.env.VITE_DATA_API_URL || "/api/data";
 
 const CAIRO_TZ = "Africa/Cairo";
 const AUTH_USERNAME = "ahmed";
@@ -116,24 +117,7 @@ function ensureAuthenticated(pathname) {
 }
 
 async function selectRows(table, options = {}) {
-  let query = requireNeon().from(table).select(options.columns || "*");
-  for (const [column, value] of options.eq || []) {
-    query = query.eq(column, value);
-  }
-  for (const [column, value] of options.ilike || []) {
-    query = query.ilike(column, value);
-  }
-  for (const [column, ascending] of options.order || []) {
-    query = query.order(column, { ascending });
-  }
-  if (options.limit) {
-    query = query.limit(options.limit);
-  }
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message);
-  }
-  return data || [];
+  return databaseRequest({ action: "select", table, ...options });
 }
 
 async function selectSingle(table, options = {}) {
@@ -142,35 +126,27 @@ async function selectSingle(table, options = {}) {
 }
 
 async function insertRow(table, payload) {
-  const { data, error } = await requireNeon().from(table).insert(payload).select().single();
-  if (error) {
-    throw new Error(error.message);
-  }
-  return data;
+  const rows = await databaseRequest({ action: "insert", table, payload });
+  return rows[0] || null;
 }
 
 async function updateRows(table, payload, eq = []) {
-  let query = requireNeon().from(table).update(payload).select();
-  for (const [column, value] of eq) {
-    query = query.eq(column, value);
-  }
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message);
-  }
-  return data || [];
+  return databaseRequest({ action: "update", table, payload, eq });
 }
 
 async function deleteRows(table, eq = []) {
-  let query = requireNeon().from(table).delete().select();
-  for (const [column, value] of eq) {
-    query = query.eq(column, value);
-  }
-  const { data, error } = await query;
-  if (error) {
-    throw new Error(error.message);
-  }
-  return data || [];
+  return databaseRequest({ action: "delete", table, eq });
+}
+
+async function databaseRequest(payload) {
+  const response = await fetch(DATA_API_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "Database request failed");
+  return result.data || [];
 }
 
 async function getSuppliers() {

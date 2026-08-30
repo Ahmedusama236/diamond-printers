@@ -124,9 +124,8 @@ create index if not exists idx_component_intake_component_time on component_inta
 create index if not exists idx_damage_damaged_at on damage_records(damaged_at desc);
 create index if not exists idx_inventory_reference on inventory_ledger(reference_type, reference_id, reversed);
 
--- Neon Data API roles are created when you provision the Data API.
--- This app retains the previous public-access behavior. For a multi-user app,
--- replace these policies with user-scoped policies backed by Neon Auth/JWT.
+-- These grants support optional Neon Data API access. The Vercel serverless
+-- function connects with DATABASE_URL and does not expose that credential.
 grant usage on schema public to anonymous, authenticated;
 grant select, insert, update, delete on all tables in schema public to anonymous, authenticated;
 grant usage, select on all sequences in schema public to anonymous, authenticated;
