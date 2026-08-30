@@ -76,6 +76,7 @@ create table if not exists sales_records (
   revenue_egp numeric not null,
   gross_profit_egp numeric not null,
   margin_pct numeric not null,
+  is_accounted boolean not null default false,
   sold_at timestamptz not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

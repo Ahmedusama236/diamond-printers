@@ -148,6 +148,7 @@ function initDb() {
       revenue_egp REAL NOT NULL,
       gross_profit_egp REAL NOT NULL,
       margin_pct REAL NOT NULL,
+      is_accounted INTEGER NOT NULL DEFAULT 0,
       sold_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -203,6 +204,10 @@ function initDb() {
     database.exec(
       `ALTER TABLE manufacturing_records ADD COLUMN status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('order', 'in_progress', 'completed'))`
     );
+  }
+  const salesColumns = database.prepare(`PRAGMA table_info(sales_records)`).all();
+  if (!salesColumns.some((column) => column.name === "is_accounted")) {
+    database.exec(`ALTER TABLE sales_records ADD COLUMN is_accounted INTEGER NOT NULL DEFAULT 0`);
   }
 
   const now = nowIso();
@@ -1979,6 +1984,22 @@ app.put(
       const current = db.prepare(`SELECT * FROM sales_records WHERE id = ?`).get(recordId);
       if (!current) {
         throw new Error("Sales record not found");
+      }
+
+      if (
+        payload.is_accounted !== undefined &&
+        Object.keys(payload).every((key) => key === "is_accounted")
+      ) {
+        db.prepare(`UPDATE sales_records SET is_accounted = ?, updated_at = ? WHERE id = ?`).run(
+          payload.is_accounted ? 1 : 0,
+          nowIso(),
+          recordId
+        );
+        return db
+          .prepare(
+            `SELECT sr.*, p.name AS product_name FROM sales_records sr JOIN products p ON p.id = sr.product_id WHERE sr.id = ?`
+          )
+          .get(recordId);
       }
 
       const productId =

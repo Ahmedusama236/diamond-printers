@@ -255,3 +255,10 @@ button.danger {
   background: #0f766e;
   border-color: #0f766e;
 }
+.accountedCheckbox {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  accent-color: #0f766e;
+  cursor: pointer;
+}

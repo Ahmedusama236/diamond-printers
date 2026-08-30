@@ -1465,6 +1465,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           t("revenue"),
           t("grossProfit"),
           t("margin"),
+          t("accounted"),
           t("actions"),
         ]}
         rows={records}
@@ -1478,6 +1479,20 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
             <td>{r.revenue_egp}</td>
             <td>{r.gross_profit_egp}</td>
             <td>{r.margin_pct}</td>
+            <td>
+              <input
+                type="checkbox"
+                className="accountedCheckbox"
+                checked={Boolean(r.is_accounted)}
+                aria-label={t("accounted")}
+                onChange={(event) =>
+                  run(async () => {
+                    await api.put(`/sales-records/${r.id}`, { is_accounted: event.target.checked });
+                    await refreshAll();
+                  })
+                }
+              />
+            </td>
             <td>
               <button
                 onClick={() =>

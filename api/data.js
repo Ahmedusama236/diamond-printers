@@ -26,6 +26,10 @@ async function ensureSchema(sql) {
     ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'completed'
     CHECK (status IN ('order', 'in_progress', 'completed'))
   `);
+  await sql.query(`
+    ALTER TABLE sales_records
+    ADD COLUMN IF NOT EXISTS is_accounted boolean NOT NULL DEFAULT false
+  `);
   schemaReady = true;
 }
 

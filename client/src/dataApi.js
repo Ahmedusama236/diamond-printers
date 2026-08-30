@@ -820,6 +820,7 @@ async function handlePost(pathname, body) {
       revenue_egp: metrics.revenueEgp,
       gross_profit_egp: metrics.grossProfitEgp,
       margin_pct: metrics.marginPct,
+      is_accounted: false,
       sold_at: soldAt,
       created_at: nowIso(),
       updated_at: nowIso(),
@@ -1046,6 +1047,14 @@ async function handlePut(pathname, body) {
     const recordId = toInt(pathname.split("/")[2], "id");
     const current = await selectSingle("sales_records", { eq: [["id", recordId]] });
     if (!current) throw new Error("Sales record not found");
+    if (body.is_accounted !== undefined && Object.keys(body).every((key) => key === "is_accounted")) {
+      const updated = (await updateRows(
+        "sales_records",
+        { is_accounted: Boolean(body.is_accounted), updated_at: nowIso() },
+        [["id", recordId]]
+      ))[0];
+      return { ...updated, product_name: (await getProductById(updated.product_id))?.name || "" };
+    }
     const productId = body.product_id !== undefined ? toInt(body.product_id, "product_id") : current.product_id;
     const unitsSold = body.units_sold !== undefined ? toPositiveInt(body.units_sold, "units_sold") : current.units_sold;
     const unitSellPriceEgp = body.unit_sell_price_egp !== undefined ? toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp") : current.unit_sell_price_egp;
