@@ -1,0 +1,53 @@
+Create a manufacturing management program for "Diamond Printers" that includes the following features:
+
+Components Management:
+
+The program should allow the management of manufacturing components, with each component having the following fields:
+
+Item Name
+
+Price
+
+Supplier (with an option to select from existing suppliers)
+
+Purchase Link (optional)
+
+Include functionality to add, edit, and delete components.
+
+When adding a product, if the user types some letters of an existing product, the program should automatically show matching products and either:
+
+Add the quantity to the existing item.
+
+Create a new item if it doesn't exist.
+
+The program should accept multiple prices for a product to account for different suppliers or price increases.
+
+For items that already exist in the inventory, keep the old price for tracking purposes.
+
+Manufacturing Tab:
+
+In the manufacturing section, when a specific number of units are produced, the required components should be automatically deducted from the inventory.
+
+The system should notify in a "Shortage" tab when any component stock goes below 1 piece.
+
+Sales Tab:
+
+When an item is sold, it should calculate both the purchase cost and the selling price for the manufactured product.
+
+The program should include a sales report tab that allows viewing reports for:
+
+Daily
+
+Weekly
+
+Monthly
+
+Yearly
+
+Specific date range
+
+Specific day
+
+Multilingual Support:
+
+Ensure the program fully supports both Arabic and English languages, allowing the user to switch between them seamlessly.

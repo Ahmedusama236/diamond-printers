@@ -1,0 +1,12 @@
+node_modules/
+server/node_modules/
+client/node_modules/
+server/data/
+client/dist/
+release/
+.env
+.env.*
+!.env.example
+client/.env
+client/.env.*
+!client/.env.example

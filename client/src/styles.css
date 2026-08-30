@@ -1,0 +1,227 @@
+:root {
+  --bg: #f5f5f7;
+  --card: #ffffff;
+  --text: #1c1f24;
+  --muted: #616977;
+  --line: #d8dde6;
+  --accent: #005b52;
+  --accent-soft: #d8f1ee;
+  --danger: #9e2a2b;
+  --radius: 12px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: radial-gradient(circle at top left, #eef7f5 0%, var(--bg) 46%, #fdfdfd 100%);
+  color: var(--text);
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+}
+
+a {
+  color: var(--accent);
+}
+
+.app {
+  max-width: 1300px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.loginShell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.loginCard {
+  width: min(100%, 440px);
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 28px;
+  box-shadow: 0 24px 60px rgba(0, 45, 41, 0.12);
+}
+
+.loginEyebrow {
+  margin: 0 0 10px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.loginForm {
+  display: grid;
+  gap: 10px;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.topbarActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.subtitle {
+  margin-top: 0;
+  color: var(--muted);
+}
+
+.langSwitch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.tab {
+  border: 1px solid var(--line);
+  border-radius: 100px;
+  background: var(--card);
+  color: var(--text);
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.tab.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+section {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+
+h1,
+h2,
+h3 {
+  margin: 0 0 10px;
+}
+
+.gridForm {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+input,
+select,
+button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+}
+
+button {
+  background: #f8fafb;
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--accent);
+}
+
+button.danger {
+  color: var(--danger);
+}
+
+.notice,
+.error,
+.info {
+  margin: 8px 0;
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.notice {
+  background: #e6f5f3;
+}
+
+.error {
+  background: #ffe9e9;
+  color: #7f1313;
+}
+
+.info {
+  background: #e9f3ff;
+  color: #204a75;
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dataTable th,
+.dataTable td {
+  border-bottom: 1px solid var(--line);
+  padding: 7px;
+  text-align: start;
+  vertical-align: top;
+}
+
+.dataTable td:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.metric {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: #fbfcfd;
+}
+
+.metric span {
+  color: var(--muted);
+  display: block;
+}
+
+.metric strong {
+  font-size: 19px;
+}
+
+@media (max-width: 800px) {
+  .topbar {
+    flex-direction: column;
+  }
+
+  .topbarActions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

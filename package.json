@@ -1,0 +1,47 @@
+{
+  "name": "diamond-printers",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Diamond Printers manufacturing management app (local-first)",
+  "main": "desktop/main.js",
+  "scripts": {
+    "dev:server": "npm --prefix server run dev",
+    "dev:client": "npm --prefix client run dev",
+    "start:server": "npm --prefix server run start",
+    "build:client": "npm --prefix client run build",
+    "build:web": "npm --prefix client run build",
+    "start:web": "node server/src/index.js",
+    "start:desktop": "electron .",
+    "build:desktop": "npm --prefix client run build && electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "com.diamondprinters.manager",
+    "productName": "Diamond Printers",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "client/dist/**/*",
+      "server/src/**/*",
+      "server/node_modules/**/*",
+      "server/package.json",
+      "package.json"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  }
+}
