@@ -55,7 +55,7 @@ function blankSale() {
     id: null,
     product_id: "",
     units_sold: 1,
-    unit_sell_price_egp: "",
+    unit_sell_price_egp: 5500,
     sold_at: nowLocalDateTimeValue(),
   };
 }

@@ -645,9 +645,7 @@ function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
   let unitPurchaseCost = 0;
   for (const item of bomItems) {
     const latestPrice = getLatestPriceForComponent(item.component_id);
-    if (!latestPrice) {
-      throw new Error(`Missing active price for component: ${item.item_name}`);
-    }
+    if (!latestPrice) continue;
     unitPurchaseCost += item.qty_per_unit * latestPrice.price_egp;
   }
 
@@ -1911,6 +1909,11 @@ app.post(
         throw new Error("Product not found");
       }
 
+      const availableStock = getFinishedStockQty(productId);
+      if (availableStock < unitsSold) {
+        throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
+      }
+
       const metrics = calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
       const now = nowIso();
       const info = db
@@ -1994,6 +1997,14 @@ app.put(
         payload.sold_at !== undefined
           ? toUtcIsoFromInput(payload.sold_at, "sold_at")
           : current.sold_at;
+
+      let availableStock = getFinishedStockQty(productId);
+      if (productId === current.product_id) {
+        availableStock += current.units_sold;
+      }
+      if (availableStock < unitsSold) {
+        throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
+      }
 
       reverseLedgerForReference("sale", recordId);
       const metrics = calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);

@@ -459,9 +459,7 @@ async function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
   let unitPurchaseCost = 0;
   for (const item of bomItems) {
     const latestPrice = await getLatestPriceForComponent(item.component_id);
-    if (!latestPrice) {
-      throw new Error(`Missing active price for component: ${item.item_name}`);
-    }
+    if (!latestPrice) continue;
     unitPurchaseCost += item.qty_per_unit * latestPrice.price_egp;
   }
   const unitPurchaseCostEgp = round2(unitPurchaseCost);
@@ -808,6 +806,10 @@ async function handlePost(pathname, body) {
     const unitSellPriceEgp = toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp");
     const soldAt = toUtcIsoFromInput(body.sold_at, "sold_at");
     if (!(await getProductById(productId))) throw new Error("Product not found");
+    const availableStock = await getFinishedStockQty(productId);
+    if (availableStock < unitsSold) {
+      throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
+    }
     const metrics = await calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
     const created = await insertRow("sales_records", {
       product_id: productId,
@@ -1048,6 +1050,11 @@ async function handlePut(pathname, body) {
     const unitsSold = body.units_sold !== undefined ? toPositiveInt(body.units_sold, "units_sold") : current.units_sold;
     const unitSellPriceEgp = body.unit_sell_price_egp !== undefined ? toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp") : current.unit_sell_price_egp;
     const soldAt = body.sold_at !== undefined ? toUtcIsoFromInput(body.sold_at, "sold_at") : current.sold_at;
+    let availableStock = await getFinishedStockQty(productId);
+    if (productId === current.product_id) availableStock += current.units_sold;
+    if (availableStock < unitsSold) {
+      throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
+    }
     await reverseLedgerForReference("sale", recordId);
     const metrics = await calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
     const updated = (await updateRows("sales_records", {
