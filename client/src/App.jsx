@@ -1141,9 +1141,6 @@ function ProductsBomTab({
   api,
   refreshBasics,
 }) {
-  const hasMissingBomPrice = bomItems.some(
-    (item) => item.latest_price_egp === null || item.latest_price_egp === undefined
-  );
   const bomTotal = bomItems.reduce(
     (total, item) => total + Number(item.qty_per_unit) * Number(item.latest_price_egp || 0),
     0
@@ -1277,7 +1274,7 @@ function ProductsBomTab({
       {bomItems.length > 0 && (
         <div className="bomTotal">
           <strong>{t("bomTotal")}:</strong>{" "}
-          <span>{hasMissingBomPrice ? t("missingPrice") : `${bomTotal.toFixed(2)} EGP`}</span>
+          <span>{`${bomTotal.toFixed(2)} EGP`}</span>
         </div>
       )}
     </section>
