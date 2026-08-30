@@ -677,7 +677,7 @@ async function handleGet(pathname, query) {
   }
   if (pathname === "/shortages") {
     return (await getComponentsWithDerivedFields())
-      .filter((row) => row.stock_qty < 1)
+      .filter((row) => row.stock_qty <= 5)
       .sort((a, b) => (a.stock_qty - b.stock_qty) || a.item_name.localeCompare(b.item_name));
   }
   if (pathname === "/inventory/search") {

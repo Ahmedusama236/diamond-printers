@@ -2159,7 +2159,7 @@ app.get(
         SELECT c.*, s.name AS supplier_name
         FROM components c
         LEFT JOIN suppliers s ON s.id = c.supplier_id
-        WHERE c.stock_qty < 1
+        WHERE c.stock_qty <= 5
         ORDER BY c.stock_qty ASC, c.item_name COLLATE NOCASE
       `
       )

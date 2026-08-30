@@ -39,7 +39,7 @@ Local-first manufacturing management system for Diamond Printers.
 - Edit/Delete reconciliation:
   - reverse previous ledger impact then apply new impact
 - Shortage view:
-  - components with stock `< 1`
+  - components with stock `<= 5`
 - Inventory lookup tab:
   - search products/components by prefix
   - component stock + last purchase date
