@@ -285,7 +285,7 @@ async function getLatestPriceForComponent(componentId) {
 async function getBomItems(productId) {
   const [rows, components] = await Promise.all([
     selectRows("bom_items", { eq: [["product_id", productId]], order: [["id", true]] }),
-    getComponentsRaw(),
+    getComponentsWithDerivedFields(),
   ]);
   const componentMap = new Map(components.map((row) => [row.id, row]));
   return rows
@@ -293,6 +293,7 @@ async function getBomItems(productId) {
       ...row,
       item_name: componentMap.get(row.component_id)?.item_name || "",
       stock_qty: componentMap.get(row.component_id)?.stock_qty ?? 0,
+      latest_price_egp: componentMap.get(row.component_id)?.latest_price_egp ?? null,
     }))
     .sort((a, b) => a.item_name.localeCompare(b.item_name));
 }

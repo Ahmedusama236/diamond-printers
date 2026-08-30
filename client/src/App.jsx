@@ -1141,6 +1141,14 @@ function ProductsBomTab({
   api,
   refreshBasics,
 }) {
+  const hasMissingBomPrice = bomItems.some(
+    (item) => item.latest_price_egp === null || item.latest_price_egp === undefined
+  );
+  const bomTotal = bomItems.reduce(
+    (total, item) => total + Number(item.qty_per_unit) * Number(item.latest_price_egp || 0),
+    0
+  );
+
   return (
     <section>
       <h2>{t("productsBom")}</h2>
@@ -1236,13 +1244,19 @@ function ProductsBomTab({
       </form>
 
       <DataTable
-        columns={[t("itemName"), t("qtyPerUnit"), t("actions")]}
+        columns={[t("itemName"), t("qtyPerUnit"), t("unitPrice"), t("lineTotal"), t("actions")]}
         rows={bomItems}
         emptyText={t("noData")}
         renderRow={(b) => (
           <>
             <td>{b.item_name}</td>
             <td>{b.qty_per_unit}</td>
+            <td>{b.latest_price_egp == null ? "-" : Number(b.latest_price_egp).toFixed(2)}</td>
+            <td>
+              {b.latest_price_egp == null
+                ? "-"
+                : (Number(b.qty_per_unit) * Number(b.latest_price_egp)).toFixed(2)}
+            </td>
             <td>
               <button
                 className="danger"
@@ -1260,6 +1274,12 @@ function ProductsBomTab({
           </>
         )}
       />
+      {bomItems.length > 0 && (
+        <div className="bomTotal">
+          <strong>{t("bomTotal")}:</strong>{" "}
+          <span>{hasMissingBomPrice ? t("missingPrice") : `${bomTotal.toFixed(2)} EGP`}</span>
+        </div>
+      )}
     </section>
   );
 }
