@@ -17,6 +17,17 @@ const TABLES = new Set([
 
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const NUMERIC_OIDS = new Set([20, 21, 23, 700, 701, 1700]);
+let schemaReady = false;
+
+async function ensureSchema(sql) {
+  if (schemaReady) return;
+  await sql.query(`
+    ALTER TABLE manufacturing_records
+    ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'completed'
+    CHECK (status IN ('order', 'in_progress', 'completed'))
+  `);
+  schemaReady = true;
+}
 
 function identifier(value, type) {
   const text = String(value || "");
@@ -69,6 +80,7 @@ module.exports = async function handler(req, res) {
 
   try {
     const sql = neon(process.env.DATABASE_URL);
+    await ensureSchema(sql);
     const body = req.body || {};
     const table = tableName(body.table);
     const params = [];

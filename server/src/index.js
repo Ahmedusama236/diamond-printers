@@ -132,6 +132,7 @@ function initDb() {
       product_id INTEGER NOT NULL,
       units_produced INTEGER NOT NULL CHECK(units_produced > 0),
       produced_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('order', 'in_progress', 'completed')),
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       FOREIGN KEY(product_id) REFERENCES products(id) ON DELETE RESTRICT
@@ -196,6 +197,13 @@ function initDb() {
       updated_at TEXT NOT NULL
     );
   `);
+
+  const manufacturingColumns = database.prepare(`PRAGMA table_info(manufacturing_records)`).all();
+  if (!manufacturingColumns.some((column) => column.name === "status")) {
+    database.exec(
+      `ALTER TABLE manufacturing_records ADD COLUMN status TEXT NOT NULL DEFAULT 'completed' CHECK(status IN ('order', 'in_progress', 'completed'))`
+    );
+  }
 
   const now = nowIso();
   database
@@ -580,7 +588,7 @@ function reverseLedgerForReference(referenceType, referenceId) {
   }
 }
 
-function applyManufacturing(recordId, productId, unitsProduced) {
+function applyManufacturingStart(recordId, productId, unitsProduced) {
   const bomItems = getBomItems(productId);
   if (!bomItems.length) {
     throw new Error("Product does not have BOM items");
@@ -606,6 +614,9 @@ function applyManufacturing(recordId, productId, unitsProduced) {
     });
   }
 
+}
+
+function applyManufacturingCompletion(recordId, productId, unitsProduced) {
   updateFinishedStock(productId, unitsProduced);
   insertLedger({
     itemType: "finished",
@@ -615,6 +626,14 @@ function applyManufacturing(recordId, productId, unitsProduced) {
     referenceType: "manufacturing",
     referenceId: recordId,
   });
+}
+
+function applyManufacturing(recordId, productId, unitsProduced, status = "completed") {
+  if (status === "order") return;
+  applyManufacturingStart(recordId, productId, unitsProduced);
+  if (status === "completed") {
+    applyManufacturingCompletion(recordId, productId, unitsProduced);
+  }
 }
 
 function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
@@ -1744,15 +1763,13 @@ app.post(
         .prepare(
           `
           INSERT INTO manufacturing_records
-            (product_id, units_produced, produced_at, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?)
+            (product_id, units_produced, produced_at, status, created_at, updated_at)
+          VALUES (?, ?, ?, 'order', ?, ?)
         `
         )
         .run(productId, unitsProduced, producedAt, now, now);
 
       const recordId = Number(info.lastInsertRowid);
-      applyManufacturing(recordId, productId, unitsProduced);
-
       return db
         .prepare(
           `
@@ -1795,18 +1812,37 @@ app.put(
         payload.produced_at !== undefined
           ? toUtcIsoFromInput(payload.produced_at, "produced_at")
           : current.produced_at;
+      const currentStatus = current.status || "completed";
+      const nextStatus = payload.status !== undefined ? String(payload.status) : currentStatus;
+      const validTransitions = {
+        order: new Set(["order", "in_progress"]),
+        in_progress: new Set(["in_progress", "completed"]),
+        completed: new Set(["completed"]),
+      };
+      if (!validTransitions[currentStatus]?.has(nextStatus)) {
+        throw new Error("Invalid manufacturing status transition");
+      }
 
-      reverseLedgerForReference("manufacturing", recordId);
+      const detailsChanged = productId !== current.product_id || unitsProduced !== current.units_produced;
+      if (detailsChanged && currentStatus !== "order") {
+        reverseLedgerForReference("manufacturing", recordId);
+      }
 
       db.prepare(
         `
         UPDATE manufacturing_records
-        SET product_id = ?, units_produced = ?, produced_at = ?, updated_at = ?
+        SET product_id = ?, units_produced = ?, produced_at = ?, status = ?, updated_at = ?
         WHERE id = ?
       `
-      ).run(productId, unitsProduced, producedAt, nowIso(), recordId);
+      ).run(productId, unitsProduced, producedAt, nextStatus, nowIso(), recordId);
 
-      applyManufacturing(recordId, productId, unitsProduced);
+      if (detailsChanged) {
+        applyManufacturing(recordId, productId, unitsProduced, nextStatus);
+      } else if (currentStatus === "order" && nextStatus === "in_progress") {
+        applyManufacturingStart(recordId, productId, unitsProduced);
+      } else if (currentStatus === "in_progress" && nextStatus === "completed") {
+        applyManufacturingCompletion(recordId, productId, unitsProduced);
+      }
 
       return db
         .prepare(

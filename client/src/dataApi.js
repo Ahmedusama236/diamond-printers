@@ -410,7 +410,7 @@ function buildCsv(report) {
   return lines.join("\n");
 }
 
-async function applyManufacturing(recordId, productId, unitsProduced) {
+async function applyManufacturingStart(recordId, productId, unitsProduced) {
   const bomItems = await getBomItems(productId);
   if (!bomItems.length) throw new Error("Product does not have BOM items");
   for (const item of bomItems) {
@@ -431,6 +431,9 @@ async function applyManufacturing(recordId, productId, unitsProduced) {
       referenceId: recordId,
     });
   }
+}
+
+async function applyManufacturingCompletion(recordId, productId, unitsProduced) {
   await updateFinishedStock(productId, unitsProduced);
   await insertLedger({
     itemType: "finished",
@@ -440,6 +443,14 @@ async function applyManufacturing(recordId, productId, unitsProduced) {
     referenceType: "manufacturing",
     referenceId: recordId,
   });
+}
+
+async function applyManufacturing(recordId, productId, unitsProduced, status = "completed") {
+  if (status === "order") return;
+  await applyManufacturingStart(recordId, productId, unitsProduced);
+  if (status === "completed") {
+    await applyManufacturingCompletion(recordId, productId, unitsProduced);
+  }
 }
 
 async function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
@@ -657,7 +668,11 @@ async function handleGet(pathname, query) {
       getProductsRaw(),
     ]);
     const productMap = new Map(products.map((row) => [row.id, row]));
-    return rows.map((row) => ({ ...row, product_name: productMap.get(row.product_id)?.name || "" }));
+    return rows.map((row) => ({
+      ...row,
+      status: row.status || "completed",
+      product_name: productMap.get(row.product_id)?.name || "",
+    }));
   }
   if (pathname === "/sales-records") {
     const [rows, products] = await Promise.all([
@@ -710,7 +725,7 @@ async function handleGet(pathname, query) {
     if (String(query.type).toLowerCase() === "product") {
       const [product, rows] = await Promise.all([
         selectSingle("products", { eq: [["id", id]] }),
-        selectRows("manufacturing_records", { eq: [["product_id", id]], order: [["produced_at", false], ["id", false]], limit: 1 }),
+        selectRows("manufacturing_records", { eq: [["product_id", id], ["status", "completed"]], order: [["produced_at", false], ["id", false]], limit: 1 }),
       ]);
       if (!product) throw new Error("Product not found");
       return { type: "product", id: product.id, name: product.name, stock_qty: await getFinishedStockQty(id), last_manufactured_at: rows[0]?.produced_at || null };
@@ -781,10 +796,10 @@ async function handlePost(pathname, body) {
       product_id: productId,
       units_produced: unitsProduced,
       produced_at: producedAt,
+      status: "order",
       created_at: nowIso(),
       updated_at: nowIso(),
     });
-    await applyManufacturing(created.id, productId, unitsProduced);
     return { ...created, product_name: (await getProductById(productId))?.name || "" };
   }
   if (pathname === "/sales-records") {
@@ -994,9 +1009,35 @@ async function handlePut(pathname, body) {
     const productId = body.product_id !== undefined ? toInt(body.product_id, "product_id") : current.product_id;
     const unitsProduced = body.units_produced !== undefined ? toPositiveInt(body.units_produced, "units_produced") : current.units_produced;
     const producedAt = body.produced_at !== undefined ? toUtcIsoFromInput(body.produced_at, "produced_at") : current.produced_at;
-    await reverseLedgerForReference("manufacturing", recordId);
-    const updated = (await updateRows("manufacturing_records", { product_id: productId, units_produced: unitsProduced, produced_at: producedAt, updated_at: nowIso() }, [["id", recordId]]))[0];
-    await applyManufacturing(recordId, productId, unitsProduced);
+    const currentStatus = current.status || "completed";
+    const nextStatus = body.status !== undefined ? String(body.status) : currentStatus;
+    const validTransitions = {
+      order: new Set(["order", "in_progress"]),
+      in_progress: new Set(["in_progress", "completed"]),
+      completed: new Set(["completed"]),
+    };
+    if (!validTransitions[currentStatus]?.has(nextStatus)) throw new Error("Invalid manufacturing status transition");
+
+    const detailsChanged = productId !== current.product_id || unitsProduced !== current.units_produced;
+    if (detailsChanged && currentStatus !== "order") {
+      await reverseLedgerForReference("manufacturing", recordId);
+    }
+
+    const updated = (await updateRows("manufacturing_records", {
+      product_id: productId,
+      units_produced: unitsProduced,
+      produced_at: producedAt,
+      status: nextStatus,
+      updated_at: nowIso(),
+    }, [["id", recordId]]))[0];
+
+    if (detailsChanged) {
+      await applyManufacturing(recordId, productId, unitsProduced, nextStatus);
+    } else if (currentStatus === "order" && nextStatus === "in_progress") {
+      await applyManufacturingStart(recordId, productId, unitsProduced);
+    } else if (currentStatus === "in_progress" && nextStatus === "completed") {
+      await applyManufacturingCompletion(recordId, productId, unitsProduced);
+    }
     return { ...updated, product_name: (await getProductById(productId))?.name || "" };
   }
   if (pathname.startsWith("/sales-records/")) {

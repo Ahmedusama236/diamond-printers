@@ -1282,10 +1282,40 @@ function ProductsBomTab({
 }
 
 function ManufacturingTab({ t, products, form, setForm, records, run, api, refreshAll }) {
+  const [activeStage, setActiveStage] = useState("order");
+  const stageRecords = records.filter((record) => (record.status || "completed") === activeStage);
+
+  const moveRecord = (record, status) =>
+    run(async () => {
+      await api.put(`/manufacturing-records/${record.id}`, { status });
+      await refreshAll();
+      setActiveStage(status);
+    });
+
   return (
     <section>
       <h2>{t("manufacturing")}</h2>
-      <form
+      <div className="subTabs">
+        {[
+          ["order", t("manufacturingOrder")],
+          ["in_progress", t("inManufacturing")],
+          ["completed", t("manufacturingCompleted")],
+        ].map(([status, label]) => (
+          <button
+            key={status}
+            type="button"
+            className={activeStage === status ? "active" : ""}
+            onClick={() => {
+              setActiveStage(status);
+              setForm(blankManufacturing());
+            }}
+          >
+            {label} ({records.filter((record) => (record.status || "completed") === status).length})
+          </button>
+        ))}
+      </div>
+
+      {activeStage === "order" && <form
         className="gridForm"
         onSubmit={(e) => {
           e.preventDefault();
@@ -1325,10 +1355,10 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
           onChange={(e) => setForm((s) => ({ ...s, produced_at: e.target.value }))}
         />
         <button type="submit">{form.id ? t("update") : t("create")}</button>
-      </form>
+      </form>}
       <DataTable
         columns={[t("product"), t("unitsProduced"), t("producedAt"), t("actions")]}
-        rows={records}
+        rows={stageRecords}
         emptyText={t("noData")}
         renderRow={(r) => (
           <>
@@ -1336,7 +1366,7 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
             <td>{r.units_produced}</td>
             <td>{new Date(r.produced_at).toLocaleString()}</td>
             <td>
-              <button
+              {activeStage === "order" && <button
                 onClick={() =>
                   setForm({
                     id: r.id,
@@ -1347,7 +1377,13 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
                 }
               >
                 {t("edit")}
-              </button>
+              </button>}
+              {activeStage === "order" && (
+                <button onClick={() => moveRecord(r, "in_progress")}>{t("startManufacturing")}</button>
+              )}
+              {activeStage === "in_progress" && (
+                <button onClick={() => moveRecord(r, "completed")}>{t("completeManufacturing")}</button>
+              )}
               <button
                 className="danger"
                 onClick={() =>

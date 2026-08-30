@@ -238,3 +238,20 @@ button.danger {
   color: #0f6f63;
   font-weight: 700;
 }
+.subTabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 18px;
+}
+
+.subTabs button {
+  background: #fff;
+  border-color: #b8d8d2;
+}
+
+.subTabs button.active {
+  color: #fff;
+  background: #0f766e;
+  border-color: #0f766e;
+}

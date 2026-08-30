@@ -61,6 +61,7 @@ create table if not exists manufacturing_records (
   product_id bigint not null references products(id) on delete restrict,
   units_produced integer not null check (units_produced > 0),
   produced_at timestamptz not null,
+  status text not null default 'completed' check (status in ('order', 'in_progress', 'completed')),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
