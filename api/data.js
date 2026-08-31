@@ -30,6 +30,26 @@ async function ensureSchema(sql) {
     ALTER TABLE sales_records
     ADD COLUMN IF NOT EXISTS is_accounted boolean NOT NULL DEFAULT false
   `);
+  await sql.query(`
+    ALTER TABLE sales_records
+    ADD COLUMN IF NOT EXISTS manufacturing_cost_per_unit numeric NOT NULL DEFAULT 1000
+  `);
+  await sql.query(`
+    ALTER TABLE sales_records
+    ADD COLUMN IF NOT EXISTS cost_includes_manufacturing boolean NOT NULL DEFAULT false
+  `);
+  await sql.query(`
+    UPDATE sales_records
+    SET unit_purchase_cost_egp = unit_purchase_cost_egp + manufacturing_cost_per_unit,
+        total_purchase_cost_egp = total_purchase_cost_egp + (manufacturing_cost_per_unit * units_sold),
+        gross_profit_egp = revenue_egp - (total_purchase_cost_egp + (manufacturing_cost_per_unit * units_sold)),
+        margin_pct = CASE
+          WHEN revenue_egp = 0 THEN 0
+          ELSE ((revenue_egp - (total_purchase_cost_egp + (manufacturing_cost_per_unit * units_sold))) / revenue_egp) * 100
+        END,
+        cost_includes_manufacturing = true
+    WHERE cost_includes_manufacturing = false
+  `);
   schemaReady = true;
 }
 

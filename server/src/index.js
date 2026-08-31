@@ -149,6 +149,8 @@ function initDb() {
       gross_profit_egp REAL NOT NULL,
       margin_pct REAL NOT NULL,
       is_accounted INTEGER NOT NULL DEFAULT 0,
+      manufacturing_cost_per_unit REAL NOT NULL DEFAULT 1000,
+      cost_includes_manufacturing INTEGER NOT NULL DEFAULT 1,
       sold_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
@@ -209,6 +211,21 @@ function initDb() {
   if (!salesColumns.some((column) => column.name === "is_accounted")) {
     database.exec(`ALTER TABLE sales_records ADD COLUMN is_accounted INTEGER NOT NULL DEFAULT 0`);
   }
+  if (!salesColumns.some((column) => column.name === "manufacturing_cost_per_unit")) {
+    database.exec(`ALTER TABLE sales_records ADD COLUMN manufacturing_cost_per_unit REAL NOT NULL DEFAULT 1000`);
+  }
+  if (!salesColumns.some((column) => column.name === "cost_includes_manufacturing")) {
+    database.exec(`ALTER TABLE sales_records ADD COLUMN cost_includes_manufacturing INTEGER NOT NULL DEFAULT 0`);
+  }
+  database.exec(`
+    UPDATE sales_records
+    SET unit_purchase_cost_egp = unit_purchase_cost_egp + manufacturing_cost_per_unit,
+        total_purchase_cost_egp = total_purchase_cost_egp + (manufacturing_cost_per_unit * units_sold),
+        gross_profit_egp = revenue_egp - (total_purchase_cost_egp + (manufacturing_cost_per_unit * units_sold)),
+        margin_pct = CASE WHEN revenue_egp = 0 THEN 0 ELSE ((revenue_egp - (total_purchase_cost_egp + (manufacturing_cost_per_unit * units_sold))) / revenue_egp) * 100 END,
+        cost_includes_manufacturing = 1
+    WHERE cost_includes_manufacturing = 0
+  `);
 
   const now = nowIso();
   database
@@ -641,7 +658,7 @@ function applyManufacturing(recordId, productId, unitsProduced, status = "comple
   }
 }
 
-function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
+function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manufacturingCostPerUnit) {
   const bomItems = getBomItems(productId);
   if (!bomItems.length) {
     throw new Error("Product does not have BOM items");
@@ -654,7 +671,7 @@ function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
     unitPurchaseCost += item.qty_per_unit * latestPrice.price_egp;
   }
 
-  const unitPurchaseCostEgp = round2(unitPurchaseCost);
+  const unitPurchaseCostEgp = round2(unitPurchaseCost + manufacturingCostPerUnit);
   const totalPurchaseCostEgp = round2(unitPurchaseCostEgp * unitsSold);
   const revenueEgp = round2(unitSellPriceEgp * unitsSold);
   const grossProfitEgp = round2(revenueEgp - totalPurchaseCostEgp);
@@ -872,12 +889,18 @@ function buildSalesReport(period, query) {
   let totalPurchaseCost = 0;
   let totalGrossProfit = 0;
   let totalUnits = 0;
+  let totalManufacturingCost = 0;
+  let manufacturingPaidUnits = 0;
+  let manufacturingRemainingUnits = 0;
 
   for (const row of filtered) {
     totalRevenue += row.revenue_egp;
     totalPurchaseCost += row.total_purchase_cost_egp;
     totalGrossProfit += row.gross_profit_egp;
     totalUnits += row.units_sold;
+    totalManufacturingCost += Number(row.manufacturing_cost_per_unit ?? 1000) * row.units_sold;
+    if (row.is_accounted) manufacturingPaidUnits += row.units_sold;
+    else manufacturingRemainingUnits += row.units_sold;
 
     const soldAt = DateTime.fromISO(row.sold_at, { zone: "utc" }).setZone(CAIRO_TZ);
     const key = bucketKeyForRecord(soldAt, period);
@@ -918,6 +941,9 @@ function buildSalesReport(period, query) {
       purchase_cost_egp: round2(totalPurchaseCost),
       gross_profit_egp: round2(totalGrossProfit),
       units_sold: totalUnits,
+      manufacturing_cost_egp: round2(totalManufacturingCost),
+      manufacturing_paid_units: manufacturingPaidUnits,
+      manufacturing_remaining_units: manufacturingRemainingUnits,
       avg_margin_pct: totalRevenue === 0 ? 0 : round2((totalGrossProfit / totalRevenue) * 100),
     },
     buckets: bucketRows,
@@ -932,6 +958,8 @@ function buildSalesReport(period, query) {
       purchase_cost_egp: row.total_purchase_cost_egp,
       gross_profit_egp: row.gross_profit_egp,
       margin_pct: row.margin_pct,
+      manufacturing_cost_per_unit: row.manufacturing_cost_per_unit ?? 1000,
+      manufacturing_paid: Boolean(row.is_accounted),
       sold_at: row.sold_at,
       sold_at_cairo: row.sold_at_cairo,
     })),
@@ -1908,6 +1936,10 @@ app.post(
       const productId = toInt(payload.product_id, "product_id");
       const unitsSold = toPositiveInt(payload.units_sold, "units_sold");
       const unitSellPriceEgp = toNonNegativeNumber(payload.unit_sell_price_egp, "unit_sell_price_egp");
+      const manufacturingCostPerUnit = toNonNegativeNumber(
+        payload.manufacturing_cost_per_unit ?? 1000,
+        "manufacturing_cost_per_unit"
+      );
       const soldAt = toUtcIsoFromInput(payload.sold_at, "sold_at");
 
       if (!getProductById(productId)) {
@@ -1919,7 +1951,7 @@ app.post(
         throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
       }
 
-      const metrics = calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
+      const metrics = calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manufacturingCostPerUnit);
       const now = nowIso();
       const info = db
         .prepare(
@@ -1934,11 +1966,13 @@ app.post(
               revenue_egp,
               gross_profit_egp,
               margin_pct,
+              manufacturing_cost_per_unit,
+              cost_includes_manufacturing,
               sold_at,
               created_at,
               updated_at
             )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
         `
         )
         .run(
@@ -1950,6 +1984,7 @@ app.post(
           metrics.revenueEgp,
           metrics.grossProfitEgp,
           metrics.marginPct,
+          manufacturingCostPerUnit,
           soldAt,
           now,
           now
@@ -2014,6 +2049,10 @@ app.put(
         payload.unit_sell_price_egp !== undefined
           ? toNonNegativeNumber(payload.unit_sell_price_egp, "unit_sell_price_egp")
           : current.unit_sell_price_egp;
+      const manufacturingCostPerUnit =
+        payload.manufacturing_cost_per_unit !== undefined
+          ? toNonNegativeNumber(payload.manufacturing_cost_per_unit, "manufacturing_cost_per_unit")
+          : Number(current.manufacturing_cost_per_unit ?? 1000);
       const soldAt =
         payload.sold_at !== undefined
           ? toUtcIsoFromInput(payload.sold_at, "sold_at")
@@ -2028,7 +2067,7 @@ app.put(
       }
 
       reverseLedgerForReference("sale", recordId);
-      const metrics = calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
+      const metrics = calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manufacturingCostPerUnit);
 
       db.prepare(
         `
@@ -2041,6 +2080,8 @@ app.put(
             revenue_egp = ?,
             gross_profit_egp = ?,
             margin_pct = ?,
+            manufacturing_cost_per_unit = ?,
+            cost_includes_manufacturing = 1,
             sold_at = ?,
             updated_at = ?
         WHERE id = ?
@@ -2054,6 +2095,7 @@ app.put(
         metrics.revenueEgp,
         metrics.grossProfitEgp,
         metrics.marginPct,
+        manufacturingCostPerUnit,
         soldAt,
         nowIso(),
         recordId

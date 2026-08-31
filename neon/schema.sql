@@ -77,6 +77,8 @@ create table if not exists sales_records (
   gross_profit_egp numeric not null,
   margin_pct numeric not null,
   is_accounted boolean not null default false,
+  manufacturing_cost_per_unit numeric not null default 1000 check (manufacturing_cost_per_unit >= 0),
+  cost_includes_manufacturing boolean not null default true,
   sold_at timestamptz not null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

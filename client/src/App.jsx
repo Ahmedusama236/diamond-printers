@@ -56,6 +56,7 @@ function blankSale() {
     product_id: "",
     units_sold: 1,
     unit_sell_price_egp: 5500,
+    manufacturing_cost_per_unit: 1000,
     sold_at: nowLocalDateTimeValue(),
   };
 }
@@ -1416,6 +1417,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
               product_id: Number(form.product_id),
               units_sold: Number(form.units_sold),
               unit_sell_price_egp: Number(form.unit_sell_price_egp),
+              manufacturing_cost_per_unit: Number(form.manufacturing_cost_per_unit),
               sold_at: form.sold_at || undefined,
             };
             if (form.id) {
@@ -1450,6 +1452,14 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           onChange={(e) => setForm((s) => ({ ...s, unit_sell_price_egp: e.target.value }))}
         />
         <input
+          type="number"
+          min="0"
+          step="0.01"
+          placeholder={t("manufacturingCostPerUnit")}
+          value={form.manufacturing_cost_per_unit}
+          onChange={(e) => setForm((s) => ({ ...s, manufacturing_cost_per_unit: e.target.value }))}
+        />
+        <input
           type="datetime-local"
           value={form.sold_at}
           onChange={(e) => setForm((s) => ({ ...s, sold_at: e.target.value }))}
@@ -1461,11 +1471,12 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           t("product"),
           t("unitsSold"),
           t("unitSellPrice"),
+          t("manufacturingCostPerUnit"),
           t("purchaseCost"),
           t("revenue"),
           t("grossProfit"),
           t("margin"),
-          t("accounted"),
+          t("manufacturingPaid"),
           t("actions"),
         ]}
         rows={records}
@@ -1475,6 +1486,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
             <td>{r.product_name}</td>
             <td>{r.units_sold}</td>
             <td>{r.unit_sell_price_egp}</td>
+            <td>{r.manufacturing_cost_per_unit ?? 1000}</td>
             <td>{r.total_purchase_cost_egp}</td>
             <td>{r.revenue_egp}</td>
             <td>{r.gross_profit_egp}</td>
@@ -1484,7 +1496,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
                 type="checkbox"
                 className="accountedCheckbox"
                 checked={Boolean(r.is_accounted)}
-                aria-label={t("accounted")}
+                aria-label={t("manufacturingPaid")}
                 onChange={(event) =>
                   run(async () => {
                     await api.put(`/sales-records/${r.id}`, { is_accounted: event.target.checked });
@@ -1501,6 +1513,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
                     product_id: String(r.product_id),
                     units_sold: r.units_sold,
                     unit_sell_price_egp: r.unit_sell_price_egp,
+                    manufacturing_cost_per_unit: r.manufacturing_cost_per_unit ?? 1000,
                     sold_at: toLocalDateTimeValue(r.sold_at),
                   })
                 }
@@ -1699,6 +1712,9 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
             <Metric label={t("purchaseCost")} value={reportData.summary.purchase_cost_egp} />
             <Metric label={t("grossProfit")} value={reportData.summary.gross_profit_egp} />
             <Metric label={t("unitsSold")} value={reportData.summary.units_sold} />
+            <Metric label={t("manufacturingCostTotal")} value={reportData.summary.manufacturing_cost_egp} />
+            <Metric label={t("manufacturingPaidUnits")} value={reportData.summary.manufacturing_paid_units} />
+            <Metric label={t("manufacturingRemainingUnits")} value={reportData.summary.manufacturing_remaining_units} />
             <Metric label={t("margin")} value={reportData.summary.avg_margin_pct} />
           </div>
 

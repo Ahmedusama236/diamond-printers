@@ -405,6 +405,9 @@ function buildCsv(report) {
     ["purchase_cost_egp", report.summary.purchase_cost_egp].join(","),
     ["gross_profit_egp", report.summary.gross_profit_egp].join(","),
     ["units_sold", report.summary.units_sold].join(","),
+    ["manufacturing_cost_egp", report.summary.manufacturing_cost_egp].join(","),
+    ["manufacturing_paid_units", report.summary.manufacturing_paid_units].join(","),
+    ["manufacturing_remaining_units", report.summary.manufacturing_remaining_units].join(","),
     ["avg_margin_pct", report.summary.avg_margin_pct].join(","),
   ];
   return lines.join("\n");
@@ -453,7 +456,7 @@ async function applyManufacturing(recordId, productId, unitsProduced, status = "
   }
 }
 
-async function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
+async function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manufacturingCostPerUnit) {
   const bomItems = await getBomItems(productId);
   if (!bomItems.length) throw new Error("Product does not have BOM items");
   let unitPurchaseCost = 0;
@@ -462,7 +465,7 @@ async function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp) {
     if (!latestPrice) continue;
     unitPurchaseCost += item.qty_per_unit * latestPrice.price_egp;
   }
-  const unitPurchaseCostEgp = round2(unitPurchaseCost);
+  const unitPurchaseCostEgp = round2(unitPurchaseCost + manufacturingCostPerUnit);
   const totalPurchaseCostEgp = round2(unitPurchaseCostEgp * unitsSold);
   const revenueEgp = round2(unitSellPriceEgp * unitsSold);
   const grossProfitEgp = round2(revenueEgp - totalPurchaseCostEgp);
@@ -581,11 +584,17 @@ async function buildSalesReport(period, query) {
   let totalPurchaseCost = 0;
   let totalGrossProfit = 0;
   let totalUnits = 0;
+  let totalManufacturingCost = 0;
+  let manufacturingPaidUnits = 0;
+  let manufacturingRemainingUnits = 0;
   for (const row of filtered) {
     totalRevenue += row.revenue_egp;
     totalPurchaseCost += row.total_purchase_cost_egp;
     totalGrossProfit += row.gross_profit_egp;
     totalUnits += row.units_sold;
+    totalManufacturingCost += Number(row.manufacturing_cost_per_unit ?? 1000) * row.units_sold;
+    if (row.is_accounted) manufacturingPaidUnits += row.units_sold;
+    else manufacturingRemainingUnits += row.units_sold;
     const key = bucketKeyForRecord(DateTime.fromISO(row.sold_at, { zone: "utc" }).setZone(CAIRO_TZ), period);
     if (!buckets.has(key)) {
       buckets.set(key, { bucket: key, revenue_egp: 0, purchase_cost_egp: 0, gross_profit_egp: 0, units_sold: 0 });
@@ -606,6 +615,9 @@ async function buildSalesReport(period, query) {
       purchase_cost_egp: round2(totalPurchaseCost),
       gross_profit_egp: round2(totalGrossProfit),
       units_sold: totalUnits,
+      manufacturing_cost_egp: round2(totalManufacturingCost),
+      manufacturing_paid_units: manufacturingPaidUnits,
+      manufacturing_remaining_units: manufacturingRemainingUnits,
       avg_margin_pct: totalRevenue === 0 ? 0 : round2((totalGrossProfit / totalRevenue) * 100),
     },
     buckets: Array.from(buckets.values())
@@ -628,6 +640,8 @@ async function buildSalesReport(period, query) {
       purchase_cost_egp: row.total_purchase_cost_egp,
       gross_profit_egp: row.gross_profit_egp,
       margin_pct: row.margin_pct,
+      manufacturing_cost_per_unit: row.manufacturing_cost_per_unit ?? 1000,
+      manufacturing_paid: Boolean(row.is_accounted),
       sold_at: row.sold_at,
       sold_at_cairo: row.sold_at_cairo,
     })),
@@ -804,13 +818,14 @@ async function handlePost(pathname, body) {
     const productId = toInt(body.product_id, "product_id");
     const unitsSold = toPositiveInt(body.units_sold, "units_sold");
     const unitSellPriceEgp = toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp");
+    const manufacturingCostPerUnit = toNonNegativeNumber(body.manufacturing_cost_per_unit ?? 1000, "manufacturing_cost_per_unit");
     const soldAt = toUtcIsoFromInput(body.sold_at, "sold_at");
     if (!(await getProductById(productId))) throw new Error("Product not found");
     const availableStock = await getFinishedStockQty(productId);
     if (availableStock < unitsSold) {
       throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
     }
-    const metrics = await calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
+    const metrics = await calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manufacturingCostPerUnit);
     const created = await insertRow("sales_records", {
       product_id: productId,
       units_sold: unitsSold,
@@ -821,6 +836,8 @@ async function handlePost(pathname, body) {
       gross_profit_egp: metrics.grossProfitEgp,
       margin_pct: metrics.marginPct,
       is_accounted: false,
+      manufacturing_cost_per_unit: manufacturingCostPerUnit,
+      cost_includes_manufacturing: true,
       sold_at: soldAt,
       created_at: nowIso(),
       updated_at: nowIso(),
@@ -1058,6 +1075,9 @@ async function handlePut(pathname, body) {
     const productId = body.product_id !== undefined ? toInt(body.product_id, "product_id") : current.product_id;
     const unitsSold = body.units_sold !== undefined ? toPositiveInt(body.units_sold, "units_sold") : current.units_sold;
     const unitSellPriceEgp = body.unit_sell_price_egp !== undefined ? toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp") : current.unit_sell_price_egp;
+    const manufacturingCostPerUnit = body.manufacturing_cost_per_unit !== undefined
+      ? toNonNegativeNumber(body.manufacturing_cost_per_unit, "manufacturing_cost_per_unit")
+      : Number(current.manufacturing_cost_per_unit ?? 1000);
     const soldAt = body.sold_at !== undefined ? toUtcIsoFromInput(body.sold_at, "sold_at") : current.sold_at;
     let availableStock = await getFinishedStockQty(productId);
     if (productId === current.product_id) availableStock += current.units_sold;
@@ -1065,7 +1085,7 @@ async function handlePut(pathname, body) {
       throw new Error(`Insufficient finished product stock. Available: ${availableStock}`);
     }
     await reverseLedgerForReference("sale", recordId);
-    const metrics = await calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp);
+    const metrics = await calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manufacturingCostPerUnit);
     const updated = (await updateRows("sales_records", {
       product_id: productId,
       units_sold: unitsSold,
@@ -1075,6 +1095,8 @@ async function handlePut(pathname, body) {
       revenue_egp: metrics.revenueEgp,
       gross_profit_egp: metrics.grossProfitEgp,
       margin_pct: metrics.marginPct,
+      manufacturing_cost_per_unit: manufacturingCostPerUnit,
+      cost_includes_manufacturing: true,
       sold_at: soldAt,
       updated_at: nowIso(),
     }, [["id", recordId]]))[0];
