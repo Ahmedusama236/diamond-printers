@@ -68,6 +68,19 @@ a {
   gap: 12px;
 }
 
+.brandHeader {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.siteLogo {
+  width: clamp(190px, 28vw, 390px);
+  max-height: 105px;
+  object-fit: contain;
+  object-position: center;
+}
+
 .topbarActions {
   display: flex;
   align-items: center;
@@ -335,6 +348,124 @@ button.danger {
   white-space: pre-wrap;
 }
 
+.invoicePrintArea {
+  display: flex;
+  justify-content: center;
+  padding: 8px;
+  background: #eef2f3;
+}
+
+.maintenanceInvoice {
+  width: 148mm;
+  min-height: 210mm;
+  overflow: hidden;
+  border: 1px solid #d6e1e5;
+  border-radius: 12px;
+  background: #fff;
+  color: #172126;
+  font-family: Tahoma, Arial, sans-serif;
+}
+
+.invoiceHeader {
+  padding: 10mm 10mm 6mm;
+  border-bottom: 3px solid #1596bb;
+  background: linear-gradient(135deg, #f3fbfc, #fff);
+  text-align: center;
+}
+
+.invoiceHeader img {
+  width: 100%;
+  max-height: 34mm;
+  object-fit: contain;
+}
+
+.invoiceHeader h2 {
+  margin: 5mm 0 1mm;
+  color: #116f91;
+  font-size: 20px;
+}
+
+.invoiceHeader div {
+  color: #65737b;
+  font-size: 11px;
+}
+
+.invoiceBody {
+  padding: 8mm 10mm;
+}
+
+.invoiceRow {
+  display: grid;
+  grid-template-columns: 34mm 1fr;
+  gap: 5mm;
+  padding: 4mm 0;
+  border-bottom: 1px solid #e6edef;
+}
+
+.invoiceRow span {
+  color: #617078;
+  font-weight: 700;
+}
+
+.invoiceRow strong {
+  white-space: pre-wrap;
+}
+
+.invoiceTotal {
+  margin-top: 8mm;
+  padding: 6mm;
+  border-radius: 10px;
+  background: #e9f8fa;
+  color: #075f78;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.maintenanceInvoice footer {
+  padding: 7mm 10mm;
+  color: #76848b;
+  text-align: center;
+  font-size: 10px;
+}
+
+.invoiceActions {
+  display: flex;
+  justify-content: center;
+  padding-top: 14px;
+}
+
+@media print {
+  @page {
+    size: A5 portrait;
+    margin: 0;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .invoicePrintArea,
+  .invoicePrintArea * {
+    visibility: visible !important;
+  }
+
+  .invoicePrintArea {
+    position: fixed;
+    inset: 0;
+    display: block;
+    padding: 0;
+    background: #fff;
+  }
+
+  .maintenanceInvoice {
+    width: 148mm;
+    min-height: 210mm;
+    border: 0;
+    border-radius: 0;
+  }
+}
+
 .dataTable tbody tr:hover {
   background: #f5fbfa;
 }
@@ -379,6 +510,16 @@ button.danger {
 @media (max-width: 800px) {
   .topbar {
     flex-direction: column;
+  }
+
+  .brandHeader {
+    width: 100%;
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .siteLogo {
+    width: min(100%, 360px);
   }
 
   .topbarActions {

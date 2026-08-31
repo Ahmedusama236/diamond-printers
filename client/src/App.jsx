@@ -481,9 +481,12 @@ function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div>
+        <div className="brandHeader">
+          <img src="./diamond-logo.png" alt="Diamond for Printer Solutions" className="siteLogo" />
+          <div>
           <h1>{t("appTitle")}</h1>
           <p className="subtitle">EGP | Africa/Cairo</p>
+          </div>
         </div>
         <div className="topbarActions">
           <div className="langSwitch">
@@ -1861,50 +1864,29 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
   );
 }
 
-function escapeInvoiceText(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+function MaintenanceInvoice({ ticket, t }) {
+  const invoiceDate = ticket.completed_at || ticket.opened_at;
+  return (
+    <article className="maintenanceInvoice" dir="rtl">
+      <header className="invoiceHeader">
+        <img src="./diamond-logo.png" alt="Diamond for Printer Solutions" />
+        <h2>{t("maintenanceInvoice")}</h2>
+        <div>#{ticket.id} — {new Date(invoiceDate).toLocaleDateString("ar-EG")}</div>
+      </header>
+      <div className="invoiceBody">
+        <InvoiceRow label={t("customerName")} value={ticket.customer_name} />
+        <InvoiceRow label={t("phone")} value={ticket.phone} />
+        <InvoiceRow label={t("deviceIssue")} value={ticket.device_issue} />
+        <InvoiceRow label={t("maintenanceDescription")} value={ticket.maintenance_description || "-"} />
+        <div className="invoiceTotal">{t("repairCharge")}: {ticket.repair_charge_egp} EGP</div>
+      </div>
+      <footer>DIAMOND FOR PRINTER SOLUTIONS</footer>
+    </article>
+  );
 }
 
-function printMaintenanceInvoice(ticket, t) {
-  const invoiceWindow = window.open("", "_blank");
-  if (!invoiceWindow) return;
-  invoiceWindow.opener = null;
-  const logoUrl = new URL("diamond-logo.svg", window.location.href).href;
-  const completedDate = ticket.completed_at || ticket.opened_at;
-  invoiceWindow.document.write(`<!doctype html>
-  <html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>maintenance-invoice-${ticket.id}</title>
-  <style>
-    @page { size: A5 portrait; margin: 10mm; }
-    * { box-sizing: border-box; }
-    body { margin: 0; color: #172126; font-family: Tahoma, Arial, sans-serif; background: #fff; }
-    .invoice { min-height: 190mm; border: 1px solid #d6e1e5; border-radius: 12px; overflow: hidden; }
-    .head { padding: 12mm 10mm 7mm; text-align: center; background: linear-gradient(135deg,#f3fbfc,#fff); border-bottom: 3px solid #1596bb; }
-    .logo { width: 100%; max-height: 34mm; object-fit: contain; }
-    h1 { margin: 6mm 0 1mm; font-size: 20px; color: #116f91; }
-    .meta { color: #65737b; font-size: 11px; }
-    .body { padding: 8mm 10mm; }
-    .row { display: grid; grid-template-columns: 34mm 1fr; gap: 5mm; padding: 4mm 0; border-bottom: 1px solid #e6edef; }
-    .label { color: #617078; font-weight: 700; }
-    .value { font-weight: 600; white-space: pre-wrap; }
-    .total { margin-top: 8mm; padding: 6mm; border-radius: 10px; background: #e9f8fa; color: #075f78; text-align: center; font-size: 20px; font-weight: 800; }
-    .footer { padding: 7mm 10mm; text-align: center; color: #76848b; font-size: 10px; }
-  </style></head><body><article class="invoice">
-    <header class="head"><img class="logo" src="${logoUrl}" alt="Diamond for Printer Solutions"><h1>${escapeInvoiceText(t("maintenanceInvoice"))}</h1><div class="meta">#${ticket.id} — ${escapeInvoiceText(new Date(completedDate).toLocaleDateString("ar-EG"))}</div></header>
-    <main class="body">
-      <div class="row"><div class="label">${escapeInvoiceText(t("customerName"))}</div><div class="value">${escapeInvoiceText(ticket.customer_name)}</div></div>
-      <div class="row"><div class="label">${escapeInvoiceText(t("phone"))}</div><div class="value">${escapeInvoiceText(ticket.phone)}</div></div>
-      <div class="row"><div class="label">${escapeInvoiceText(t("deviceIssue"))}</div><div class="value">${escapeInvoiceText(ticket.device_issue)}</div></div>
-      <div class="row"><div class="label">${escapeInvoiceText(t("maintenanceDescription"))}</div><div class="value">${escapeInvoiceText(ticket.maintenance_description || "-")}</div></div>
-      <div class="total">${escapeInvoiceText(t("repairCharge"))}: ${escapeInvoiceText(ticket.repair_charge_egp)} EGP</div>
-    </main>
-    <footer class="footer">DIAMOND FOR PRINTER SOLUTIONS</footer>
-  </article><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),300));<\/script></body></html>`);
-  invoiceWindow.document.close();
+function InvoiceRow({ label, value }) {
+  return <div className="invoiceRow"><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
@@ -1913,6 +1895,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
   const [requestForm, setRequestForm] = useState(blankMaintenanceTicket());
   const [selectedTicketId, setSelectedTicketId] = useState(null);
   const [editingTicket, setEditingTicket] = useState(null);
+  const [invoiceTicket, setInvoiceTicket] = useState(null);
   const [partForm, setPartForm] = useState({ component_id: "", qty_used: 1 });
   const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) || null;
   const visibleTickets = tickets.filter((ticket) =>
@@ -1973,7 +1956,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
               <td>
                 <button type="button" onClick={() => setSelectedTicketId(ticket.id)}>{t("view")}</button>
                 <button type="button" onClick={() => setEditingTicket({ ...ticket })}>{t("edit")}</button>
-                <button type="button" className="pdfButton" title={t("downloadInvoice")} onClick={() => printMaintenanceInvoice(ticket, t)}>📄 PDF</button>
+                <button type="button" className="pdfButton" title={t("downloadInvoice")} onClick={() => setInvoiceTicket(ticket)}>📄 PDF</button>
                 <button type="button" className="danger" onClick={() => {
                   if (!window.confirm(t("confirmDeleteTicket"))) return;
                   run(async () => {
@@ -2045,6 +2028,19 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
             <input type="number" min="0" step="0.01" placeholder={t("repairCharge")} value={editingTicket.repair_charge_egp} onChange={(event) => setEditingTicket((state) => ({ ...state, repair_charge_egp: event.target.value }))} />
             <button type="submit" className="primaryButton">{t("update")}</button>
           </form>
+        </Modal>
+      )}
+
+      {invoiceTicket && (
+        <Modal title={t("maintenanceInvoice")} onClose={() => setInvoiceTicket(null)}>
+          <div className="invoicePrintArea">
+            <MaintenanceInvoice ticket={invoiceTicket} t={t} />
+          </div>
+          <div className="invoiceActions noPrint">
+            <button type="button" className="primaryButton" onClick={() => window.print()}>
+              📄 {t("printOrSavePdf")}
+            </button>
+          </div>
         </Modal>
       )}
 
