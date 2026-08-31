@@ -262,3 +262,12 @@ button.danger {
   accent-color: #0f766e;
   cursor: pointer;
 }
+
+.purchaseIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  font-size: 1.25rem;
+  text-decoration: none;
+}

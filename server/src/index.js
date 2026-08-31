@@ -70,6 +70,7 @@ function initDb() {
       item_name TEXT NOT NULL,
       item_name_normalized TEXT NOT NULL UNIQUE,
       stock_qty INTEGER NOT NULL DEFAULT 0,
+      minimum_stock_qty INTEGER CHECK(minimum_stock_qty IS NULL OR minimum_stock_qty >= 0),
       supplier_id INTEGER,
       purchase_link TEXT,
       created_at TEXT NOT NULL,
@@ -201,6 +202,10 @@ function initDb() {
     );
   `);
 
+  const componentColumns = database.prepare(`PRAGMA table_info(components)`).all();
+  if (!componentColumns.some((column) => column.name === "minimum_stock_qty")) {
+    database.exec(`ALTER TABLE components ADD COLUMN minimum_stock_qty INTEGER CHECK(minimum_stock_qty IS NULL OR minimum_stock_qty >= 0)`);
+  }
   const manufacturingColumns = database.prepare(`PRAGMA table_info(manufacturing_records)`).all();
   if (!manufacturingColumns.some((column) => column.name === "status")) {
     database.exec(
@@ -1154,7 +1159,14 @@ app.get(
           c.*,
           s.name AS supplier_name,
           ph.price_egp AS latest_price_egp,
-          ph.supplier_id AS latest_price_supplier_id
+          ph.supplier_id AS latest_price_supplier_id,
+          COALESCE((SELECT MAX(b.qty_per_unit) FROM bom_items b WHERE b.component_id = c.id), 0)
+            AS automatic_minimum_stock_qty,
+          COALESCE(
+            c.minimum_stock_qty,
+            (SELECT MAX(b.qty_per_unit) FROM bom_items b WHERE b.component_id = c.id),
+            0
+          ) AS effective_minimum_stock_qty
         FROM components c
         LEFT JOIN suppliers s ON s.id = c.supplier_id
         LEFT JOIN component_price_history ph ON ph.component_id = c.id AND ph.is_active = 1
@@ -1216,16 +1228,20 @@ app.post(
       const purchaseLink = payload.purchase_link ? String(payload.purchase_link).trim() : null;
       const stockQty =
         payload.stock_qty !== undefined ? toNonNegativeInt(payload.stock_qty, "stock_qty") : 0;
+      const minimumStockQty =
+        payload.minimum_stock_qty === undefined || payload.minimum_stock_qty === null || payload.minimum_stock_qty === ""
+          ? null
+          : toNonNegativeInt(payload.minimum_stock_qty, "minimum_stock_qty");
 
       const info = db
         .prepare(
           `
           INSERT INTO components
-            (item_name, item_name_normalized, stock_qty, supplier_id, purchase_link, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+            (item_name, item_name_normalized, stock_qty, minimum_stock_qty, supplier_id, purchase_link, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `
         )
-        .run(itemName, normalized, stockQty, supplierId, purchaseLink, now, now);
+        .run(itemName, normalized, stockQty, minimumStockQty, supplierId, purchaseLink, now, now);
 
       const componentId = Number(info.lastInsertRowid);
 
@@ -1284,14 +1300,20 @@ app.put(
             ? String(payload.purchase_link).trim()
             : null
           : current.purchase_link;
+      const minimumStockQty =
+        payload.minimum_stock_qty !== undefined
+          ? payload.minimum_stock_qty === null || payload.minimum_stock_qty === ""
+            ? null
+            : toNonNegativeInt(payload.minimum_stock_qty, "minimum_stock_qty")
+          : current.minimum_stock_qty;
 
       db.prepare(
         `
         UPDATE components
-        SET item_name = ?, item_name_normalized = ?, supplier_id = ?, purchase_link = ?, updated_at = ?
+        SET item_name = ?, item_name_normalized = ?, supplier_id = ?, purchase_link = ?, minimum_stock_qty = ?, updated_at = ?
         WHERE id = ?
       `
-      ).run(itemName, normalized, supplierId, purchaseLink, nowIso(), componentId);
+      ).run(itemName, normalized, supplierId, purchaseLink, minimumStockQty, nowIso(), componentId);
 
       if (payload.stock_qty !== undefined) {
         const newStock = toNonNegativeInt(payload.stock_qty, "stock_qty");
@@ -1412,11 +1434,21 @@ app.post(
           .prepare(
             `
             INSERT INTO components
-              (item_name, item_name_normalized, stock_qty, supplier_id, purchase_link, created_at, updated_at)
-            VALUES (?, ?, 0, ?, ?, ?, ?)
+              (item_name, item_name_normalized, stock_qty, minimum_stock_qty, supplier_id, purchase_link, created_at, updated_at)
+            VALUES (?, ?, 0, ?, ?, ?, ?, ?)
           `
           )
-          .run(name, normalized, supplierId, purchaseLink, now, now);
+          .run(
+            name,
+            normalized,
+            payload.minimum_stock_qty === undefined || payload.minimum_stock_qty === null || payload.minimum_stock_qty === ""
+              ? null
+              : toNonNegativeInt(payload.minimum_stock_qty, "minimum_stock_qty"),
+            supplierId,
+            purchaseLink,
+            now,
+            now
+          );
         componentId = Number(info.lastInsertRowid);
       } else {
         throw new Error("decision must be either 'existing' or 'new'");
@@ -1444,6 +1476,16 @@ app.post(
       const intakeRecordId = Number(intakeInfo.lastInsertRowid);
 
       applyComponentIntake(intakeRecordId, componentId, qty);
+
+      if (payload.minimum_stock_qty !== undefined && payload.minimum_stock_qty !== "") {
+        db.prepare(`UPDATE components SET minimum_stock_qty = ?, updated_at = ? WHERE id = ?`).run(
+          payload.minimum_stock_qty === null
+            ? null
+            : toNonNegativeInt(payload.minimum_stock_qty, "minimum_stock_qty"),
+          receivedAt,
+          componentId
+        );
+      }
 
       if (supplierId || purchaseLink) {
         db.prepare(
@@ -2266,11 +2308,19 @@ app.get(
     const rows = db
       .prepare(
         `
-        SELECT c.*, s.name AS supplier_name
-        FROM components c
-        LEFT JOIN suppliers s ON s.id = c.supplier_id
-        WHERE c.stock_qty <= 5
-        ORDER BY c.stock_qty ASC, c.item_name COLLATE NOCASE
+        WITH shortage_levels AS (
+          SELECT
+            c.*,
+            s.name AS supplier_name,
+            COALESCE(c.minimum_stock_qty, MAX(b.qty_per_unit), 0) AS effective_minimum_stock_qty
+          FROM components c
+          LEFT JOIN suppliers s ON s.id = c.supplier_id
+          LEFT JOIN bom_items b ON b.component_id = c.id
+          GROUP BY c.id
+        )
+        SELECT * FROM shortage_levels
+        WHERE stock_qty <= effective_minimum_stock_qty
+        ORDER BY stock_qty ASC, item_name COLLATE NOCASE
       `
       )
       .all();

@@ -12,6 +12,7 @@ create table if not exists components (
   item_name text not null,
   item_name_normalized text not null unique,
   stock_qty integer not null default 0,
+  minimum_stock_qty integer check (minimum_stock_qty is null or minimum_stock_qty >= 0),
   supplier_id bigint references suppliers(id) on delete set null,
   purchase_link text,
   created_at timestamptz not null default now(),

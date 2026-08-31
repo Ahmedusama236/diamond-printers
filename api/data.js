@@ -22,6 +22,11 @@ let schemaReady = false;
 async function ensureSchema(sql) {
   if (schemaReady) return;
   await sql.query(`
+    ALTER TABLE components
+    ADD COLUMN IF NOT EXISTS minimum_stock_qty integer
+    CHECK (minimum_stock_qty IS NULL OR minimum_stock_qty >= 0)
+  `);
+  await sql.query(`
     ALTER TABLE manufacturing_records
     ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'completed'
     CHECK (status IN ('order', 'in_progress', 'completed'))

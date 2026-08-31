@@ -24,6 +24,7 @@ function blankComponent() {
     id: null,
     item_name: "",
     stock_qty: 0,
+    minimum_stock_qty: "",
     supplier_id: "",
     purchase_link: "",
     price_egp: "",
@@ -38,6 +39,7 @@ function blankIntake() {
     supplier_id: "",
     purchase_link: "",
     price_egp: "",
+    minimum_stock_qty: "",
     received_at: nowLocalDateTimeValue(),
   };
 }
@@ -214,6 +216,24 @@ function App() {
     }, 250);
     return () => clearTimeout(timeout);
   }, [inventoryQuery]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return undefined;
+    const refreshStock = async () => {
+      try {
+        const [componentsPayload, shortagePayload] = await Promise.all([
+          api.get("/components"),
+          api.get("/shortages"),
+        ]);
+        setComponents(componentsPayload);
+        setShortages(shortagePayload);
+      } catch (e) {
+        if (e?.status === 401) setIsAuthenticated(false);
+      }
+    };
+    const interval = setInterval(refreshStock, 15000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -568,6 +588,10 @@ function App() {
                       const payload = {
                         item_name: componentForm.item_name,
                         stock_qty: Number(componentForm.stock_qty),
+                        minimum_stock_qty:
+                          componentForm.minimum_stock_qty === ""
+                            ? null
+                            : Number(componentForm.minimum_stock_qty),
                         supplier_id: componentForm.supplier_id || null,
                         purchase_link: componentForm.purchase_link || null,
                         price_egp:
@@ -591,6 +615,15 @@ function App() {
                     placeholder={t("stockQty")}
                     value={componentForm.stock_qty}
                     onChange={(e) => setComponentForm((s) => ({ ...s, stock_qty: e.target.value }))}
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder={t("minimumStock")}
+                    value={componentForm.minimum_stock_qty ?? ""}
+                    onChange={(e) =>
+                      setComponentForm((s) => ({ ...s, minimum_stock_qty: e.target.value }))
+                    }
                   />
                   <select
                     value={componentForm.supplier_id}
@@ -643,6 +676,10 @@ function App() {
                     supplier_id: intakeForm.supplier_id || undefined,
                     purchase_link: intakeForm.purchase_link || undefined,
                     price_egp: intakeForm.price_egp ? Number(intakeForm.price_egp) : undefined,
+                    minimum_stock_qty:
+                      intakeForm.minimum_stock_qty === ""
+                        ? undefined
+                        : Number(intakeForm.minimum_stock_qty),
                     received_at: intakeForm.received_at || undefined,
                   });
                   setIntakeForm(blankIntake());
@@ -674,6 +711,15 @@ function App() {
                 min="1"
                 value={intakeForm.qty}
                 onChange={(e) => setIntakeForm((s) => ({ ...s, qty: e.target.value }))}
+              />
+              <input
+                type="number"
+                min="0"
+                placeholder={t("minimumStock")}
+                value={intakeForm.minimum_stock_qty}
+                onChange={(e) =>
+                  setIntakeForm((s) => ({ ...s, minimum_stock_qty: e.target.value }))
+                }
               />
               <select
                 value={intakeForm.supplier_id}
@@ -711,6 +757,7 @@ function App() {
               columns={[
                 t("itemName"),
                 t("stockQty"),
+                t("minimumStock"),
                 t("supplier"),
                 t("latestPrice"),
                 t("purchaseLink"),
@@ -722,9 +769,12 @@ function App() {
                 <>
                   <td>{c.item_name}</td>
                   <td>{c.stock_qty}</td>
+                  <td>
+                    {c.minimum_stock_qty ?? `${t("automaticFromBom")} (${c.effective_minimum_stock_qty})`}
+                  </td>
                   <td>{c.supplier_name || "-"}</td>
                   <td>{c.latest_price_egp ?? "-"}</td>
-                  <td>{c.purchase_link ? <a href={c.purchase_link}>{c.purchase_link}</a> : "-"}</td>
+                  <td>{c.purchase_link ? <PurchaseLink href={c.purchase_link} label={t("openPurchaseLink")} /> : "-"}</td>
                   <td>
                     <button onClick={() => setComponentForm({ ...c, price_egp: "" })}>{t("edit")}</button>
                     <button
@@ -777,7 +827,7 @@ function App() {
                       <td>{p.qty_received}</td>
                       <td>{p.price_egp}</td>
                       <td>{p.supplier_name || "-"}</td>
-                      <td>{p.purchase_link || "-"}</td>
+                      <td>{p.purchase_link ? <PurchaseLink href={p.purchase_link} label={t("openPurchaseLink")} /> : "-"}</td>
                       <td>{new Date(p.received_at).toLocaleString()}</td>
                       <td>
                         <button
@@ -986,15 +1036,16 @@ function App() {
             <p>{t("lowStockNotice")}</p>
             <button onClick={() => run(async () => refreshShortages())}>{t("refresh")}</button>
             <DataTable
-              columns={[t("itemName"), t("stockQty"), t("supplier"), t("purchaseLink")]}
+              columns={[t("itemName"), t("inventoryStock"), t("minimumStock"), t("supplier"), t("purchaseLink")]}
               rows={shortages}
               emptyText={t("noData")}
               renderRow={(s) => (
                 <>
                   <td>{s.item_name}</td>
                   <td>{s.stock_qty}</td>
+                  <td>{s.effective_minimum_stock_qty}</td>
                   <td>{s.supplier_name || "-"}</td>
-                  <td>{s.purchase_link || "-"}</td>
+                  <td>{s.purchase_link ? <PurchaseLink href={s.purchase_link} label={t("openPurchaseLink")} /> : "-"}</td>
                 </>
               )}
             />
@@ -1768,6 +1819,28 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
         </>
       )}
     </section>
+  );
+}
+
+function normalizePurchaseUrl(value) {
+  const cleaned = String(value || "").trim().replace(/^\/+((?:https?:\/\/))/i, "$1");
+  if (!cleaned) return "";
+  if (/^https?:\/\//i.test(cleaned)) return cleaned;
+  return `https://${cleaned}`;
+}
+
+function PurchaseLink({ href, label }) {
+  return (
+    <a
+      href={normalizePurchaseUrl(href)}
+      target="_blank"
+      rel="noopener noreferrer"
+      title={label}
+      aria-label={label}
+      className="purchaseIcon"
+    >
+      🌐
+    </a>
   );
 }
 

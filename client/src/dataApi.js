@@ -321,10 +321,11 @@ async function getPurchaseHistory(componentId) {
 }
 
 async function getComponentsWithDerivedFields() {
-  const [components, suppliers, prices] = await Promise.all([
+  const [components, suppliers, prices, bomItems] = await Promise.all([
     getComponentsRaw(),
     getSuppliers(),
     selectRows("component_price_history"),
+    selectRows("bom_items"),
   ]);
   const supplierMap = new Map(suppliers.map((row) => [row.id, row]));
   const latestPriceMap = new Map();
@@ -334,11 +335,23 @@ async function getComponentsWithDerivedFields() {
       latestPriceMap.set(row.component_id, row);
     }
   }
+  const bomMinimumMap = new Map();
+  for (const item of bomItems) {
+    bomMinimumMap.set(
+      item.component_id,
+      Math.max(bomMinimumMap.get(item.component_id) || 0, Number(item.qty_per_unit) || 0)
+    );
+  }
   return components.map((row) => ({
     ...row,
     supplier_name: supplierMap.get(row.supplier_id)?.name || null,
     latest_price_egp: latestPriceMap.get(row.id)?.price_egp ?? null,
     latest_price_supplier_id: latestPriceMap.get(row.id)?.supplier_id ?? null,
+    automatic_minimum_stock_qty: bomMinimumMap.get(row.id) || 0,
+    effective_minimum_stock_qty:
+      row.minimum_stock_qty === null || row.minimum_stock_qty === undefined
+        ? bomMinimumMap.get(row.id) || 0
+        : Number(row.minimum_stock_qty),
   }));
 }
 
@@ -704,7 +717,7 @@ async function handleGet(pathname, query) {
   }
   if (pathname === "/shortages") {
     return (await getComponentsWithDerivedFields())
-      .filter((row) => row.stock_qty <= 5)
+      .filter((row) => row.stock_qty <= row.effective_minimum_stock_qty)
       .sort((a, b) => (a.stock_qty - b.stock_qty) || a.item_name.localeCompare(b.item_name));
   }
   if (pathname === "/inventory/search") {
@@ -888,6 +901,10 @@ async function handlePost(pathname, body) {
           stock_qty: 0,
           supplier_id: supplierId,
           purchase_link: purchaseLink,
+          minimum_stock_qty:
+            body.minimum_stock_qty === undefined || body.minimum_stock_qty === null || body.minimum_stock_qty === ""
+              ? null
+              : toNonNegativeInt(body.minimum_stock_qty, "minimum_stock_qty"),
           created_at: nowIso(),
           updated_at: nowIso(),
         })
@@ -905,6 +922,15 @@ async function handlePost(pathname, body) {
       created_at: nowIso(),
     });
     await applyComponentIntake(intakeRecord.id, componentId, qty);
+    if (body.minimum_stock_qty !== undefined && body.minimum_stock_qty !== "") {
+      await updateRows("components", {
+        minimum_stock_qty:
+          body.minimum_stock_qty === null
+            ? null
+            : toNonNegativeInt(body.minimum_stock_qty, "minimum_stock_qty"),
+        updated_at: receivedAt,
+      }, [["id", componentId]]);
+    }
     if (supplierId || purchaseLink) {
       const component = await selectSingle("components", { eq: [["id", componentId]] });
       await updateRows("components", {
@@ -981,11 +1007,17 @@ async function handlePut(pathname, body) {
     const itemName = body.item_name !== undefined ? requireName(body.item_name, "item_name") : current.item_name;
     const supplierId = body.supplier_id !== undefined ? (body.supplier_id ? toInt(body.supplier_id, "supplier_id") : null) : current.supplier_id;
     const purchaseLink = body.purchase_link !== undefined ? (body.purchase_link ? String(body.purchase_link).trim() : null) : current.purchase_link;
+    const minimumStockQty = body.minimum_stock_qty !== undefined
+      ? (body.minimum_stock_qty === null || body.minimum_stock_qty === ""
+          ? null
+          : toNonNegativeInt(body.minimum_stock_qty, "minimum_stock_qty"))
+      : current.minimum_stock_qty;
     await updateRows("components", {
       item_name: itemName,
       item_name_normalized: normalizeName(itemName),
       supplier_id: supplierId,
       purchase_link: purchaseLink,
+      minimum_stock_qty: minimumStockQty,
       updated_at: nowIso(),
     }, [["id", componentId]]);
     if (body.stock_qty !== undefined) {
