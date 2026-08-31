@@ -578,8 +578,10 @@ function App() {
           <section>
             <h2>{t("components")}</h2>
             {componentForm.id && (
-              <>
-                <h3>{t("edit")} {t("components")}</h3>
+              <Modal
+                title={`${t("edit")} ${t("components")}`}
+                onClose={() => setComponentForm(blankComponent())}
+              >
                 <form
                   className="gridForm"
                   onSubmit={(e) => {
@@ -654,7 +656,7 @@ function App() {
                     {t("cancel")}
                   </button>
                 </form>
-              </>
+              </Modal>
             )}
 
             <h3>{t("intake")}</h3>
@@ -807,10 +809,15 @@ function App() {
             />
 
             {purchaseHistoryComponentId !== null && (
-              <>
-                <h3>
-                  {t("purchaseHistory")}: {purchaseHistoryItem}
-                </h3>
+              <Modal
+                title={`${t("purchaseHistory")}: ${purchaseHistoryItem}`}
+                onClose={() => {
+                  setPurchaseHistoryComponentId(null);
+                  setPurchaseHistoryRows([]);
+                  setPurchaseEditForm(blankPurchaseEdit());
+                }}
+                wide
+              >
                 <DataTable
                   columns={[
                     t("qtyReceived"),
@@ -961,7 +968,7 @@ function App() {
                     </form>
                   </>
                 )}
-              </>
+              </Modal>
             )}
           </section>
         )}
@@ -1827,6 +1834,41 @@ function normalizePurchaseUrl(value) {
   if (!cleaned) return "";
   if (/^https?:\/\//i.test(cleaned)) return cleaned;
   return `https://${cleaned}`;
+}
+
+function Modal({ title, onClose, wide = false, children }) {
+  useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  return (
+    <div className="modalBackdrop" role="presentation" onMouseDown={onClose}>
+      <div
+        className={`modalCard${wide ? " modalCardWide" : ""}`}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <div className="modalHeader">
+          <h3>{title}</h3>
+          <button type="button" className="modalClose" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </div>
+        <div className="modalBody">{children}</div>
+      </div>
+    </div>
+  );
 }
 
 function PurchaseLink({ href, label }) {

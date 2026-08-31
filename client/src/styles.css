@@ -271,3 +271,55 @@ button.danger {
   font-size: 1.25rem;
   text-decoration: none;
 }
+
+.modalBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(12, 24, 29, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.modalCard {
+  width: min(100%, 720px);
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--card);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.24);
+}
+
+.modalCardWide {
+  width: min(100%, 1180px);
+}
+
+.modalHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.modalHeader h3 {
+  margin: 0;
+}
+
+.modalClose {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.modalBody {
+  max-height: calc(100vh - 110px);
+  overflow: auto;
+  padding: 16px;
+}
