@@ -140,6 +140,8 @@ function App() {
   const [purchaseHistoryItem, setPurchaseHistoryItem] = useState("");
   const [purchaseHistoryComponentId, setPurchaseHistoryComponentId] = useState(null);
   const [purchaseEditForm, setPurchaseEditForm] = useState(blankPurchaseEdit());
+  const [showSupplierForm, setShowSupplierForm] = useState(false);
+  const [showIntakeForm, setShowIntakeForm] = useState(false);
   const [inventoryQuery, setInventoryQuery] = useState("");
   const [inventoryMatches, setInventoryMatches] = useState([]);
   const [inventoryItem, setInventoryItem] = useState(null);
@@ -503,7 +505,22 @@ function App() {
       <main>
         {activeTab === "suppliers" && (
           <section>
-            <h2>{t("suppliers")}</h2>
+            <SectionHeader
+              title={t("suppliers")}
+              actionLabel={`＋ ${t("create")}`}
+              onAction={() => {
+                setSupplierForm(blankSupplier());
+                setShowSupplierForm(true);
+              }}
+            />
+            {(showSupplierForm || supplierForm.id) && (
+            <Modal
+              title={`${supplierForm.id ? t("edit") : t("create")} ${t("suppliers")}`}
+              onClose={() => {
+                setSupplierForm(blankSupplier());
+                setShowSupplierForm(false);
+              }}
+            >
             <form
               className="gridForm"
               onSubmit={(e) => {
@@ -520,6 +537,7 @@ function App() {
                     await api.post("/suppliers", payload);
                   }
                   setSupplierForm(blankSupplier());
+                  setShowSupplierForm(false);
                   await refreshBasics();
                 });
               }}
@@ -540,10 +558,15 @@ function App() {
                 onChange={(e) => setSupplierForm((s) => ({ ...s, email: e.target.value }))}
               />
               <button type="submit">{supplierForm.id ? t("update") : t("create")}</button>
-              <button type="button" onClick={() => setSupplierForm(blankSupplier())}>
+              <button type="button" onClick={() => {
+                setSupplierForm(blankSupplier());
+                setShowSupplierForm(false);
+              }}>
                 {t("cancel")}
               </button>
             </form>
+            </Modal>
+            )}
 
             <DataTable
               columns={[t("name"), t("phone"), t("email"), t("actions")]}
@@ -576,7 +599,14 @@ function App() {
 
         {activeTab === "components" && (
           <section>
-            <h2>{t("components")}</h2>
+            <SectionHeader
+              title={t("components")}
+              actionLabel={`＋ ${t("intake")}`}
+              onAction={() => {
+                setIntakeForm(blankIntake());
+                setShowIntakeForm(true);
+              }}
+            />
             {componentForm.id && (
               <Modal
                 title={`${t("edit")} ${t("components")}`}
@@ -659,7 +689,12 @@ function App() {
               </Modal>
             )}
 
-            <h3>{t("intake")}</h3>
+            {showIntakeForm && (
+            <Modal title={t("intake")} onClose={() => {
+              setIntakeForm(blankIntake());
+              setSearchMatches([]);
+              setShowIntakeForm(false);
+            }}>
             <form
               className="gridForm"
               onSubmit={(e) => {
@@ -686,6 +721,7 @@ function App() {
                   });
                   setIntakeForm(blankIntake());
                   setSearchMatches([]);
+                  setShowIntakeForm(false);
                   await refreshBasics();
                   await refreshShortages();
                 });
@@ -754,6 +790,8 @@ function App() {
               />
               <button type="submit">{t("save")}</button>
             </form>
+            </Modal>
+            )}
 
             <DataTable
               columns={[
@@ -1100,9 +1138,9 @@ function App() {
               )}
             />
 
-            {inventoryItem && inventoryItem.type === "component" && (
-              <>
-                <h3>{inventoryItem.name}</h3>
+            {inventoryItem && (
+              <Modal title={inventoryItem.name} onClose={() => setInventoryItem(null)}>
+              {inventoryItem.type === "component" ? (
                 <DataTable
                   columns={[t("stockQty"), t("receivedAt"), t("supplier")]}
                   rows={[inventoryItem]}
@@ -1115,12 +1153,7 @@ function App() {
                     </>
                   )}
                 />
-              </>
-            )}
-
-            {inventoryItem && inventoryItem.type === "product" && (
-              <>
-                <h3>{inventoryItem.name}</h3>
+              ) : (
                 <DataTable
                   columns={[t("finishedStock"), t("producedAt")]}
                   rows={[inventoryItem]}
@@ -1132,7 +1165,8 @@ function App() {
                     </>
                   )}
                 />
-              </>
+              )}
+              </Modal>
             )}
           </section>
         )}
@@ -1200,6 +1234,8 @@ function ProductsBomTab({
   api,
   refreshBasics,
 }) {
+  const [showProductForm, setShowProductForm] = useState(false);
+  const [showBomForm, setShowBomForm] = useState(false);
   const bomTotal = bomItems.reduce(
     (total, item) => total + Number(item.qty_per_unit) * Number(item.latest_price_egp || 0),
     0
@@ -1207,7 +1243,22 @@ function ProductsBomTab({
 
   return (
     <section>
-      <h2>{t("productsBom")}</h2>
+      <SectionHeader
+        title={t("productsBom")}
+        actionLabel={`＋ ${t("create")}`}
+        onAction={() => {
+          setProductForm(blankProduct());
+          setShowProductForm(true);
+        }}
+      />
+      {(showProductForm || productForm.id) && (
+      <Modal
+        title={`${productForm.id ? t("edit") : t("create")} ${t("product")}`}
+        onClose={() => {
+          setProductForm(blankProduct());
+          setShowProductForm(false);
+        }}
+      >
       <form
         className="gridForm"
         onSubmit={(e) => {
@@ -1219,6 +1270,7 @@ function ProductsBomTab({
               await api.post("/products", { name: productForm.name });
             }
             setProductForm(blankProduct());
+            setShowProductForm(false);
             await refreshBasics();
           });
         }}
@@ -1230,6 +1282,8 @@ function ProductsBomTab({
         />
         <button type="submit">{productForm.id ? t("update") : t("create")}</button>
       </form>
+      </Modal>
+      )}
 
       <DataTable
         columns={[t("name"), t("finishedStock"), t("actions")]}
@@ -1262,7 +1316,14 @@ function ProductsBomTab({
         )}
       />
 
-      <h3>{t("bomItems")}</h3>
+      <SectionHeader
+        title={t("bomItems")}
+        actionLabel={`＋ ${t("save")}`}
+        onAction={() => setShowBomForm(true)}
+        compact
+      />
+      {showBomForm && (
+      <Modal title={t("bomItems")} onClose={() => setShowBomForm(false)}>
       <form
         className="gridForm"
         onSubmit={(e) => {
@@ -1276,6 +1337,7 @@ function ProductsBomTab({
             const rows = await api.get(`/products/${selectedProductId}/bom`);
             setBomItems(rows);
             setBomForm({ component_id: "", qty_per_unit: 1 });
+            setShowBomForm(false);
           });
         }}
       >
@@ -1298,6 +1360,8 @@ function ProductsBomTab({
         />
         <button type="submit">{t("save")}</button>
       </form>
+      </Modal>
+      )}
 
       <DataTable
         columns={[t("itemName"), t("qtyPerUnit"), t("unitPrice"), t("lineTotal"), t("actions")]}
@@ -1342,6 +1406,7 @@ function ProductsBomTab({
 
 function ManufacturingTab({ t, products, form, setForm, records, run, api, refreshAll }) {
   const [activeStage, setActiveStage] = useState("order");
+  const [showForm, setShowForm] = useState(false);
   const stageRecords = records.filter((record) => (record.status || "completed") === activeStage);
 
   const moveRecord = (record, status) =>
@@ -1353,7 +1418,14 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
 
   return (
     <section>
-      <h2>{t("manufacturing")}</h2>
+      <SectionHeader
+        title={t("manufacturing")}
+        actionLabel={activeStage === "order" ? `＋ ${t("manufacturingOrder")}` : null}
+        onAction={() => {
+          setForm(blankManufacturing());
+          setShowForm(true);
+        }}
+      />
       <div className="subTabs">
         {[
           ["order", t("manufacturingOrder")],
@@ -1367,6 +1439,7 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
             onClick={() => {
               setActiveStage(status);
               setForm(blankManufacturing());
+              setShowForm(false);
             }}
           >
             {label} ({records.filter((record) => (record.status || "completed") === status).length})
@@ -1374,7 +1447,13 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
         ))}
       </div>
 
-      {activeStage === "order" && <form
+      {activeStage === "order" && (showForm || form.id) && <Modal
+        title={`${form.id ? t("edit") : t("create")} ${t("manufacturingOrder")}`}
+        onClose={() => {
+          setForm(blankManufacturing());
+          setShowForm(false);
+        }}
+      ><form
         className="gridForm"
         onSubmit={(e) => {
           e.preventDefault();
@@ -1390,6 +1469,7 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
               await api.post("/manufacturing-records", payload);
             }
             setForm(blankManufacturing());
+            setShowForm(false);
             await refreshAll();
           });
         }}
@@ -1414,7 +1494,7 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
           onChange={(e) => setForm((s) => ({ ...s, produced_at: e.target.value }))}
         />
         <button type="submit">{form.id ? t("update") : t("create")}</button>
-      </form>}
+      </form></Modal>}
       <DataTable
         columns={[t("product"), t("unitsProduced"), t("producedAt"), t("actions")]}
         rows={stageRecords}
@@ -1463,9 +1543,24 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
 }
 
 function SalesTab({ t, products, form, setForm, records, run, api, refreshAll }) {
+  const [showForm, setShowForm] = useState(false);
   return (
     <section>
-      <h2>{t("sales")}</h2>
+      <SectionHeader
+        title={t("sales")}
+        actionLabel={`＋ ${t("create")}`}
+        onAction={() => {
+          setForm(blankSale());
+          setShowForm(true);
+        }}
+      />
+      {(showForm || form.id) && <Modal
+        title={`${form.id ? t("edit") : t("create")} ${t("sales")}`}
+        onClose={() => {
+          setForm(blankSale());
+          setShowForm(false);
+        }}
+      >
       <form
         className="gridForm"
         onSubmit={(e) => {
@@ -1484,6 +1579,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
               await api.post("/sales-records", payload);
             }
             setForm(blankSale());
+            setShowForm(false);
             await refreshAll();
           });
         }}
@@ -1524,6 +1620,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
         />
         <button type="submit">{form.id ? t("update") : t("create")}</button>
       </form>
+      </Modal>}
       <DataTable
         columns={[
           t("product"),
@@ -1598,9 +1695,24 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
 }
 
 function DamagedTab({ t, components, form, setForm, records, run, api, refreshAll }) {
+  const [showForm, setShowForm] = useState(false);
   return (
     <section>
-      <h2>{t("damaged")}</h2>
+      <SectionHeader
+        title={t("damaged")}
+        actionLabel={`＋ ${t("create")}`}
+        onAction={() => {
+          setForm(blankDamage());
+          setShowForm(true);
+        }}
+      />
+      {(showForm || form.id) && <Modal
+        title={`${form.id ? t("edit") : t("create")} ${t("damaged")}`}
+        onClose={() => {
+          setForm(blankDamage());
+          setShowForm(false);
+        }}
+      >
       <form
         className="gridForm"
         onSubmit={(e) => {
@@ -1617,6 +1729,7 @@ function DamagedTab({ t, components, form, setForm, records, run, api, refreshAl
               await api.post("/damage-records", payload);
             }
             setForm(blankDamage());
+            setShowForm(false);
             await refreshAll();
           });
         }}
@@ -1645,6 +1758,7 @@ function DamagedTab({ t, components, form, setForm, records, run, api, refreshAl
         />
         <button type="submit">{form.id ? t("update") : t("create")}</button>
       </form>
+      </Modal>}
       <DataTable
         columns={[t("itemName"), t("qtyDamaged"), t("damagedAt"), t("actions")]}
         rows={records}
@@ -1836,6 +1950,19 @@ function normalizePurchaseUrl(value) {
   return `https://${cleaned}`;
 }
 
+function SectionHeader({ title, actionLabel, onAction, compact = false }) {
+  return (
+    <div className={`sectionHeader${compact ? " sectionHeaderCompact" : ""}`}>
+      {compact ? <h3>{title}</h3> : <h2>{title}</h2>}
+      {actionLabel && onAction && (
+        <button type="button" className="primaryButton" onClick={onAction}>
+          {actionLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function Modal({ title, onClose, wide = false, children }) {
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1897,6 +2024,7 @@ function Metric({ label, value }) {
 
 function DataTable({ columns, rows, renderRow, emptyText }) {
   return (
+    <div className="tableScroll">
     <table className="dataTable">
       <thead>
         <tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr>
@@ -1912,6 +2040,7 @@ function DataTable({ columns, rows, renderRow, emptyText }) {
         ))}
       </tbody>
     </table>
+    </div>
   );
 }
 

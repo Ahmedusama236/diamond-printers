@@ -112,8 +112,9 @@ section {
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 12px;
+  padding: 18px;
   margin-bottom: 12px;
+  box-shadow: 0 8px 28px rgba(20, 58, 55, 0.05);
 }
 
 h1,
@@ -147,6 +148,36 @@ button:hover {
   border-color: var(--accent);
 }
 
+.primaryButton {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.primaryButton:hover {
+  background: #004a43;
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.sectionHeader h2,
+.sectionHeader h3 {
+  margin: 0;
+}
+
+.sectionHeaderCompact {
+  margin-top: 22px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
 button.danger {
   color: var(--danger);
 }
@@ -176,6 +207,22 @@ button.danger {
 .dataTable {
   width: 100%;
   border-collapse: collapse;
+}
+
+.tableScroll {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid #edf0f4;
+  border-radius: 10px;
+}
+
+.tableScroll .dataTable th {
+  white-space: nowrap;
+  background: #f8fbfb;
+}
+
+.dataTable tbody tr:hover {
+  background: #f5fbfa;
 }
 
 .dataTable th,
@@ -223,6 +270,27 @@ button.danger {
   .topbarActions {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .app {
+    padding: 10px;
+  }
+
+  section {
+    padding: 12px;
+  }
+
+  .sectionHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .modalBackdrop {
+    padding: 8px;
+  }
+
+  .modalCard {
+    max-height: calc(100vh - 16px);
   }
 }
 .bomTotal {
