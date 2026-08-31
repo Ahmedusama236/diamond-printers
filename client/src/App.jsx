@@ -5,12 +5,13 @@ import { t as tr } from "./i18n";
 const TABS = [
   "suppliers",
   "components",
+  "purchases",
   "productsBom",
   "manufacturing",
   "sales",
   "damaged",
+  "maintenance",
   "shortage",
-  "inventory",
   "reports",
   "settings",
 ];
@@ -65,6 +66,15 @@ function blankSale() {
 
 function blankDamage() {
   return { id: null, component_id: "", qty_damaged: 1, damaged_at: nowLocalDateTimeValue() };
+}
+
+function blankMaintenanceTicket() {
+  return {
+    customer_name: "",
+    phone: "",
+    device_issue: "",
+    opened_at: nowLocalDateTimeValue(),
+  };
 }
 
 function blankPurchaseEdit() {
@@ -123,6 +133,8 @@ function App() {
   const [salesRecords, setSalesRecords] = useState([]);
   const [damageRecords, setDamageRecords] = useState([]);
   const [shortages, setShortages] = useState([]);
+  const [maintenanceTickets, setMaintenanceTickets] = useState([]);
+  const [shortageSupplierId, setShortageSupplierId] = useState("");
 
   const [selectedProductId, setSelectedProductId] = useState("");
 
@@ -298,7 +310,13 @@ function App() {
       setSuppliers(suppliersPayload);
       setComponents(componentsPayload);
       setProducts(productsPayload);
-      await Promise.all([refreshManufacturing(), refreshSales(), refreshDamaged(), refreshShortages()]);
+      await Promise.all([
+        refreshManufacturing(),
+        refreshSales(),
+        refreshDamaged(),
+        refreshShortages(),
+        refreshMaintenance(),
+      ]);
     } catch (e) {
       if (!handleRequestError(e)) {
         setError(e.message);
@@ -335,6 +353,11 @@ function App() {
   async function refreshShortages() {
     const rows = await api.get("/shortages");
     setShortages(rows);
+  }
+
+  async function refreshMaintenance() {
+    const rows = await api.get("/maintenance-tickets");
+    setMaintenanceTickets(rows);
   }
 
   async function run(action) {
@@ -490,7 +513,11 @@ function App() {
         {TABS.map((tab) => (
           <button
             key={tab}
-            className={activeTab === tab ? "tab active" : "tab"}
+            className={
+              activeTab === tab || (tab === "components" && activeTab === "inventory")
+                ? "tab active"
+                : "tab"
+            }
             onClick={() => setActiveTab(tab)}
           >
             {t(tab)}
@@ -601,12 +628,11 @@ function App() {
           <section>
             <SectionHeader
               title={t("components")}
-              actionLabel={`＋ ${t("intake")}`}
-              onAction={() => {
-                setIntakeForm(blankIntake());
-                setShowIntakeForm(true);
-              }}
             />
+            <div className="subTabs">
+              <button type="button" className="active">{t("components")}</button>
+              <button type="button" onClick={() => setActiveTab("inventory")}>{t("inventory")}</button>
+            </div>
             {componentForm.id && (
               <Modal
                 title={`${t("edit")} ${t("components")}`}
@@ -1011,6 +1037,19 @@ function App() {
           </section>
         )}
 
+        {activeTab === "purchases" && (
+          <PurchasesTab
+            t={t}
+            suppliers={suppliers}
+            components={components}
+            run={run}
+            api={api}
+            refreshAll={async () => {
+              await Promise.all([refreshBasics(), refreshShortages()]);
+            }}
+          />
+        )}
+
         {activeTab === "productsBom" && (
           <ProductsBomTab
             t={t}
@@ -1075,14 +1114,35 @@ function App() {
           />
         )}
 
+        {activeTab === "maintenance" && (
+          <MaintenanceTab
+            t={t}
+            components={components}
+            tickets={maintenanceTickets}
+            run={run}
+            api={api}
+            refreshAll={async () => {
+              await Promise.all([refreshMaintenance(), refreshBasics(), refreshShortages()]);
+            }}
+          />
+        )}
+
         {activeTab === "shortage" && (
           <section>
             <h2>{t("shortage")}</h2>
             <p>{t("lowStockNotice")}</p>
-            <button onClick={() => run(async () => refreshShortages())}>{t("refresh")}</button>
+            <div className="filterBar">
+              <select value={shortageSupplierId} onChange={(e) => setShortageSupplierId(e.target.value)}>
+                <option value="">{t("allSuppliers")}</option>
+                {suppliers.map((supplier) => (
+                  <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+                ))}
+              </select>
+              <button onClick={() => run(async () => refreshShortages())}>{t("refresh")}</button>
+            </div>
             <DataTable
               columns={[t("itemName"), t("inventoryStock"), t("minimumStock"), t("supplier"), t("purchaseLink")]}
-              rows={shortages}
+              rows={shortages.filter((row) => !shortageSupplierId || String(row.supplier_id) === shortageSupplierId)}
               emptyText={t("noData")}
               renderRow={(s) => (
                 <>
@@ -1099,7 +1159,11 @@ function App() {
 
         {activeTab === "inventory" && (
           <section>
-            <h2>{t("inventory")}</h2>
+            <SectionHeader title={t("components")} />
+            <div className="subTabs">
+              <button type="button" onClick={() => setActiveTab("components")}>{t("components")}</button>
+              <button type="button" className="active">{t("inventory")}</button>
+            </div>
             <div className="gridForm">
               <input
                 placeholder={t("inventorySearchPlaceholder")}
@@ -1215,6 +1279,109 @@ function App() {
         )}
       </main>
     </div>
+  );
+}
+
+function PurchasesTab({ t, suppliers, components, run, api, refreshAll }) {
+  const [form, setForm] = useState(blankIntake());
+  const [showForm, setShowForm] = useState(false);
+  const normalizedName = form.name.trim().toLowerCase();
+  const suggestions = components
+    .filter((component) => component.item_name.toLowerCase().includes(normalizedName))
+    .slice(0, 20);
+
+  return (
+    <section>
+      <SectionHeader
+        title={t("purchases")}
+        actionLabel={`＋ ${t("newPurchase")}`}
+        onAction={() => {
+          setForm(blankIntake());
+          setShowForm(true);
+        }}
+      />
+      <div className="emptyStateHint">{t("purchaseHint")}</div>
+      {showForm && (
+        <Modal title={t("newPurchase")} onClose={() => setShowForm(false)}>
+          <form
+            className="gridForm"
+            onSubmit={(event) => {
+              event.preventDefault();
+              run(async () => {
+                const exactMatch = components.find(
+                  (component) => component.item_name.trim().toLowerCase() === normalizedName
+                );
+                await api.post("/components/intake", {
+                  name: form.name,
+                  qty: Number(form.qty),
+                  decision: exactMatch ? "existing" : "new",
+                  existing_component_id: exactMatch?.id,
+                  supplier_id: form.supplier_id || undefined,
+                  purchase_link: form.purchase_link || undefined,
+                  price_egp: form.price_egp === "" ? undefined : Number(form.price_egp),
+                  minimum_stock_qty:
+                    form.minimum_stock_qty === "" ? undefined : Number(form.minimum_stock_qty),
+                  received_at: form.received_at || undefined,
+                });
+                setForm(blankIntake());
+                setShowForm(false);
+                await refreshAll();
+              });
+            }}
+          >
+            <input
+              list="purchase-component-suggestions"
+              placeholder={t("itemName")}
+              value={form.name}
+              onChange={(event) => setForm((state) => ({ ...state, name: event.target.value }))}
+              required
+            />
+            <datalist id="purchase-component-suggestions">
+              {suggestions.map((component) => (
+                <option key={component.id} value={component.item_name} />
+              ))}
+            </datalist>
+            <input
+              type="number"
+              min="1"
+              placeholder={t("quantity")}
+              value={form.qty}
+              onChange={(event) => setForm((state) => ({ ...state, qty: event.target.value }))}
+              required
+            />
+            <select
+              value={form.supplier_id}
+              onChange={(event) => setForm((state) => ({ ...state, supplier_id: event.target.value }))}
+            >
+              <option value="">{t("supplier")}</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>{supplier.name}</option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              placeholder={t("priceEgp")}
+              value={form.price_egp}
+              onChange={(event) => setForm((state) => ({ ...state, price_egp: event.target.value }))}
+            />
+            <input
+              type="datetime-local"
+              value={form.received_at}
+              onChange={(event) => setForm((state) => ({ ...state, received_at: event.target.value }))}
+              required
+            />
+            <input
+              placeholder={t("purchaseLink")}
+              value={form.purchase_link}
+              onChange={(event) => setForm((state) => ({ ...state, purchase_link: event.target.value }))}
+            />
+            <button type="submit" className="primaryButton">{t("save")}</button>
+          </form>
+        </Modal>
+      )}
+    </section>
   );
 }
 
@@ -1545,7 +1712,7 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
 function SalesTab({ t, products, form, setForm, records, run, api, refreshAll }) {
   const [showForm, setShowForm] = useState(false);
   return (
-    <section>
+    <section className="salesSection">
       <SectionHeader
         title={t("sales")}
         actionLabel={`＋ ${t("create")}`}
@@ -1690,6 +1857,179 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           </>
         )}
       />
+    </section>
+  );
+}
+
+function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
+  const [activeStage, setActiveStage] = useState("request");
+  const [showRequest, setShowRequest] = useState(false);
+  const [requestForm, setRequestForm] = useState(blankMaintenanceTicket());
+  const [selectedTicketId, setSelectedTicketId] = useState(null);
+  const [partForm, setPartForm] = useState({ component_id: "", qty_used: 1 });
+  const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) || null;
+  const visibleTickets = tickets.filter((ticket) =>
+    activeStage === "completed" ? ticket.status === "completed" : ticket.status === "in_progress"
+  );
+
+  return (
+    <section>
+      <SectionHeader title={t("maintenance")} />
+      <div className="subTabs">
+        <button
+          type="button"
+          className={activeStage === "request" ? "active" : ""}
+          onClick={() => {
+            setActiveStage("request");
+            setRequestForm(blankMaintenanceTicket());
+            setShowRequest(true);
+          }}
+        >
+          {t("maintenanceRequest")}
+        </button>
+        <button
+          type="button"
+          className={activeStage === "in_progress" ? "active" : ""}
+          onClick={() => setActiveStage("in_progress")}
+        >
+          {t("underMaintenance")} ({tickets.filter((ticket) => ticket.status === "in_progress").length})
+        </button>
+        <button
+          type="button"
+          className={activeStage === "completed" ? "active" : ""}
+          onClick={() => setActiveStage("completed")}
+        >
+          {t("maintenanceCompleted")} ({tickets.filter((ticket) => ticket.status === "completed").length})
+        </button>
+      </div>
+
+      {activeStage === "request" && (
+        <div className="emptyStateHint">
+          <button type="button" className="primaryButton" onClick={() => setShowRequest(true)}>
+            ＋ {t("openMaintenanceTicket")}
+          </button>
+        </div>
+      )}
+
+      {activeStage !== "request" && (
+        <DataTable
+          columns={[t("customerName"), t("phone"), t("deviceIssue"), t("partsCost"), t("actions")]}
+          rows={visibleTickets}
+          emptyText={t("noData")}
+          renderRow={(ticket) => (
+            <>
+              <td>{ticket.customer_name}</td>
+              <td>{ticket.phone}</td>
+              <td>{ticket.device_issue}</td>
+              <td>{ticket.parts_cost_egp}</td>
+              <td>
+                <button type="button" onClick={() => setSelectedTicketId(ticket.id)}>{t("view")}</button>
+                {ticket.status === "completed" && (
+                  <label className="checkboxLabel">
+                    <input
+                      type="checkbox"
+                      className="accountedCheckbox"
+                      checked={Boolean(ticket.delivered)}
+                      onChange={(event) => run(async () => {
+                        await api.put(`/maintenance-tickets/${ticket.id}`, { delivered: event.target.checked });
+                        await refreshAll();
+                      })}
+                    />
+                    {t("delivered")}
+                  </label>
+                )}
+              </td>
+            </>
+          )}
+        />
+      )}
+
+      {showRequest && (
+        <Modal title={t("openMaintenanceTicket")} onClose={() => setShowRequest(false)}>
+          <form className="gridForm" onSubmit={(event) => {
+            event.preventDefault();
+            run(async () => {
+              await api.post("/maintenance-tickets", requestForm);
+              setRequestForm(blankMaintenanceTicket());
+              setShowRequest(false);
+              setActiveStage("in_progress");
+              await refreshAll();
+            });
+          }}>
+            <input placeholder={t("customerName")} value={requestForm.customer_name} onChange={(event) => setRequestForm((state) => ({ ...state, customer_name: event.target.value }))} required />
+            <input placeholder={t("phone")} value={requestForm.phone} onChange={(event) => setRequestForm((state) => ({ ...state, phone: event.target.value }))} required />
+            <textarea placeholder={t("deviceIssue")} value={requestForm.device_issue} onChange={(event) => setRequestForm((state) => ({ ...state, device_issue: event.target.value }))} required />
+            <input type="datetime-local" value={requestForm.opened_at} onChange={(event) => setRequestForm((state) => ({ ...state, opened_at: event.target.value }))} />
+            <button type="submit" className="primaryButton">{t("save")}</button>
+          </form>
+        </Modal>
+      )}
+
+      {selectedTicket && (
+        <Modal title={`${t("maintenanceTicket")} #${selectedTicket.id}`} onClose={() => setSelectedTicketId(null)} wide>
+          <div className="ticketDetails">
+            <div><span>{t("customerName")}</span><strong>{selectedTicket.customer_name}</strong></div>
+            <div><span>{t("phone")}</span><strong>{selectedTicket.phone}</strong></div>
+            <div className="ticketIssue"><span>{t("deviceIssue")}</span><strong>{selectedTicket.device_issue}</strong></div>
+          </div>
+          <DataTable
+            columns={[t("itemName"), t("quantity"), t("unitPrice"), t("lineTotal"), t("actions")]}
+            rows={selectedTicket.parts}
+            emptyText={t("noData")}
+            renderRow={(part) => (
+              <>
+                <td>{part.item_name}</td><td>{part.qty_used}</td><td>{part.unit_price_egp}</td><td>{part.total_price_egp}</td>
+                <td>{selectedTicket.status === "in_progress" && <button className="danger" onClick={() => run(async () => {
+                  await api.delete(`/maintenance-parts/${part.id}`);
+                  await refreshAll();
+                })}>{t("delete")}</button>}</td>
+              </>
+            )}
+          />
+          {selectedTicket.status === "in_progress" && (
+            <form className="gridForm modalSection" onSubmit={(event) => {
+              event.preventDefault();
+              run(async () => {
+                await api.post(`/maintenance-tickets/${selectedTicket.id}/parts`, {
+                  component_id: Number(partForm.component_id),
+                  qty_used: Number(partForm.qty_used),
+                });
+                setPartForm({ component_id: "", qty_used: 1 });
+                await refreshAll();
+              });
+            }}>
+              <select value={partForm.component_id} onChange={(event) => setPartForm((state) => ({ ...state, component_id: event.target.value }))} required>
+                <option value="">{t("components")}</option>
+                {components.map((component) => <option key={component.id} value={component.id}>{component.item_name} ({component.stock_qty})</option>)}
+              </select>
+              <input type="number" min="1" value={partForm.qty_used} onChange={(event) => setPartForm((state) => ({ ...state, qty_used: event.target.value }))} required />
+              <button type="submit">{t("addPart")}</button>
+            </form>
+          )}
+          <div className="ticketTotals">
+            <span>{t("partsCost")}: <strong>{selectedTicket.parts_cost_egp} EGP</strong></span>
+            <span>{t("maintenanceProfit")}: <strong>{selectedTicket.maintenance_profit_egp} EGP</strong></span>
+          </div>
+          {selectedTicket.status === "in_progress" && (
+            <form className="gridForm modalSection" onSubmit={(event) => {
+              event.preventDefault();
+              const input = event.currentTarget.elements.repair_charge_egp;
+              run(async () => {
+                await api.put(`/maintenance-tickets/${selectedTicket.id}`, {
+                  repair_charge_egp: Number(input.value),
+                  status: "completed",
+                });
+                setSelectedTicketId(null);
+                setActiveStage("completed");
+                await refreshAll();
+              });
+            }}>
+              <input name="repair_charge_egp" type="number" min="0" step="0.01" defaultValue={selectedTicket.repair_charge_egp || ""} placeholder={t("repairCharge")} required />
+              <button type="submit" className="primaryButton">{t("completeMaintenance")}</button>
+            </form>
+          )}
+        </Modal>
+      )}
     </section>
   );
 }
@@ -1887,6 +2227,11 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
             <Metric label={t("manufacturingCostTotal")} value={reportData.summary.manufacturing_cost_egp} />
             <Metric label={t("manufacturingPaidUnits")} value={reportData.summary.manufacturing_paid_units} />
             <Metric label={t("manufacturingRemainingUnits")} value={reportData.summary.manufacturing_remaining_units} />
+            <Metric label={t("maintenanceRevenue")} value={reportData.summary.maintenance_revenue_egp} />
+            <Metric label={t("maintenancePartsCost")} value={reportData.summary.maintenance_parts_cost_egp} />
+            <Metric label={t("maintenanceProfit")} value={reportData.summary.maintenance_profit_egp} />
+            <Metric label={t("totalProfitWithMaintenance")} value={reportData.summary.total_profit_with_maintenance_egp} />
+            <Metric label={t("deliveredMaintenanceCount")} value={reportData.summary.delivered_maintenance_count} />
             <Metric label={t("margin")} value={reportData.summary.avg_margin_pct} />
           </div>
 

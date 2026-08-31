@@ -120,6 +120,31 @@ create table if not exists settings (
   updated_at timestamptz not null default now()
 );
 
+create table if not exists maintenance_tickets (
+  id bigint generated always as identity primary key,
+  customer_name text not null,
+  phone text not null,
+  device_issue text not null,
+  status text not null default 'in_progress' check (status in ('in_progress', 'completed')),
+  repair_charge_egp numeric not null default 0 check (repair_charge_egp >= 0),
+  delivered boolean not null default false,
+  opened_at timestamptz not null default now(),
+  completed_at timestamptz,
+  delivered_at timestamptz,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists maintenance_parts (
+  id bigint generated always as identity primary key,
+  ticket_id bigint not null references maintenance_tickets(id) on delete cascade,
+  component_id bigint not null references components(id) on delete restrict,
+  qty_used integer not null check (qty_used > 0),
+  unit_price_egp numeric not null default 0 check (unit_price_egp >= 0),
+  total_price_egp numeric not null default 0 check (total_price_egp >= 0),
+  created_at timestamptz not null default now()
+);
+
 insert into settings (key, value, updated_at)
 values ('language', 'en', now())
 on conflict (key) do nothing;
@@ -152,6 +177,8 @@ alter table damage_records enable row level security;
 alter table finished_stock enable row level security;
 alter table inventory_ledger enable row level security;
 alter table settings enable row level security;
+alter table maintenance_tickets enable row level security;
+alter table maintenance_parts enable row level security;
 
 drop policy if exists "public suppliers" on suppliers;
 create policy "public suppliers" on suppliers for all using (true) with check (true);
@@ -177,3 +204,7 @@ drop policy if exists "public inventory_ledger" on inventory_ledger;
 create policy "public inventory_ledger" on inventory_ledger for all using (true) with check (true);
 drop policy if exists "public settings" on settings;
 create policy "public settings" on settings for all using (true) with check (true);
+drop policy if exists "public maintenance_tickets" on maintenance_tickets;
+create policy "public maintenance_tickets" on maintenance_tickets for all using (true) with check (true);
+drop policy if exists "public maintenance_parts" on maintenance_parts;
+create policy "public maintenance_parts" on maintenance_parts for all using (true) with check (true);

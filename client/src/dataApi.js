@@ -421,6 +421,11 @@ function buildCsv(report) {
     ["manufacturing_cost_egp", report.summary.manufacturing_cost_egp].join(","),
     ["manufacturing_paid_units", report.summary.manufacturing_paid_units].join(","),
     ["manufacturing_remaining_units", report.summary.manufacturing_remaining_units].join(","),
+    ["maintenance_revenue_egp", report.summary.maintenance_revenue_egp].join(","),
+    ["maintenance_parts_cost_egp", report.summary.maintenance_parts_cost_egp].join(","),
+    ["maintenance_profit_egp", report.summary.maintenance_profit_egp].join(","),
+    ["total_profit_with_maintenance_egp", report.summary.total_profit_with_maintenance_egp].join(","),
+    ["delivered_maintenance_count", report.summary.delivered_maintenance_count].join(","),
     ["avg_margin_pct", report.summary.avg_margin_pct].join(","),
   ];
   return lines.join("\n");
@@ -618,6 +623,20 @@ async function buildSalesReport(period, query) {
     bucket.gross_profit_egp += row.gross_profit_egp;
     bucket.units_sold += row.units_sold;
   }
+  const maintenanceTickets = (await getMaintenanceTickets()).filter((ticket) => {
+    if (!ticket.delivered || !ticket.delivered_at) return false;
+    const deliveredAt = DateTime.fromISO(ticket.delivered_at, { zone: "utc" }).setZone(CAIRO_TZ);
+    return deliveredAt >= start && deliveredAt <= end;
+  });
+  const maintenanceRevenue = maintenanceTickets.reduce(
+    (total, ticket) => total + Number(ticket.repair_charge_egp),
+    0
+  );
+  const maintenancePartsCost = maintenanceTickets.reduce(
+    (total, ticket) => total + Number(ticket.parts_cost_egp),
+    0
+  );
+  const maintenanceProfit = maintenanceRevenue - maintenancePartsCost;
   return {
     period,
     timezone: CAIRO_TZ,
@@ -631,6 +650,11 @@ async function buildSalesReport(period, query) {
       manufacturing_cost_egp: round2(totalManufacturingCost),
       manufacturing_paid_units: manufacturingPaidUnits,
       manufacturing_remaining_units: manufacturingRemainingUnits,
+      maintenance_revenue_egp: round2(maintenanceRevenue),
+      maintenance_parts_cost_egp: round2(maintenancePartsCost),
+      maintenance_profit_egp: round2(maintenanceProfit),
+      total_profit_with_maintenance_egp: round2(totalGrossProfit + maintenanceProfit),
+      delivered_maintenance_count: maintenanceTickets.length,
       avg_margin_pct: totalRevenue === 0 ? 0 : round2((totalGrossProfit / totalRevenue) * 100),
     },
     buckets: Array.from(buckets.values())
@@ -659,7 +683,29 @@ async function buildSalesReport(period, query) {
       sold_at_cairo: row.sold_at_cairo,
     })),
     damaged: await buildDamagedReport(period, query, { start, end }),
+    maintenance: maintenanceTickets,
   };
+}
+
+async function getMaintenanceTickets() {
+  const [tickets, parts, components] = await Promise.all([
+    selectRows("maintenance_tickets", { order: [["opened_at", false]] }),
+    selectRows("maintenance_parts", { order: [["id", true]] }),
+    getComponentsRaw(),
+  ]);
+  const componentMap = new Map(components.map((row) => [row.id, row]));
+  return tickets.map((ticket) => {
+    const ticketParts = parts
+      .filter((part) => part.ticket_id === ticket.id)
+      .map((part) => ({ ...part, item_name: componentMap.get(part.component_id)?.item_name || "" }));
+    const partsCost = round2(ticketParts.reduce((total, part) => total + Number(part.total_price_egp), 0));
+    return {
+      ...ticket,
+      parts: ticketParts,
+      parts_cost_egp: partsCost,
+      maintenance_profit_egp: round2(Number(ticket.repair_charge_egp) - partsCost),
+    };
+  });
 }
 
 async function handleGet(pathname, query) {
@@ -715,6 +761,7 @@ async function handleGet(pathname, query) {
     const componentMap = new Map(components.map((row) => [row.id, row]));
     return rows.map((row) => ({ ...row, item_name: componentMap.get(row.component_id)?.item_name || "" }));
   }
+  if (pathname === "/maintenance-tickets") return getMaintenanceTickets();
   if (pathname === "/shortages") {
     return (await getComponentsWithDerivedFields())
       .filter((row) => row.stock_qty <= row.effective_minimum_stock_qty)
@@ -793,6 +840,54 @@ async function handlePost(pathname, body) {
     });
     await upsertFinishedStock(created.id, 0);
     return created;
+  }
+  if (pathname === "/maintenance-tickets") {
+    const now = nowIso();
+    return insertRow("maintenance_tickets", {
+      customer_name: requireName(body.customer_name, "customer_name"),
+      phone: requireName(body.phone, "phone"),
+      device_issue: requireName(body.device_issue, "device_issue"),
+      status: "in_progress",
+      repair_charge_egp: 0,
+      delivered: false,
+      opened_at: toUtcIsoFromInput(body.opened_at, "opened_at"),
+      completed_at: null,
+      delivered_at: null,
+      created_at: now,
+      updated_at: now,
+    });
+  }
+  if (pathname.match(/^\/maintenance-tickets\/\d+\/parts$/)) {
+    const ticketId = toInt(pathname.split("/")[2], "ticket_id");
+    const ticket = await selectSingle("maintenance_tickets", { eq: [["id", ticketId]] });
+    if (!ticket || ticket.status !== "in_progress") throw new Error("Maintenance ticket is not active");
+    const componentId = toInt(body.component_id, "component_id");
+    const qtyUsed = toPositiveInt(body.qty_used, "qty_used");
+    const component = await getComponentById(componentId);
+    if (!component) throw new Error("Component not found");
+    if (component.stock_qty < qtyUsed) {
+      throw new Error(`Insufficient component stock. Available: ${component.stock_qty}`);
+    }
+    const latestPrice = await getLatestPriceForComponent(componentId);
+    const unitPrice = Number(latestPrice?.price_egp || 0);
+    const part = await insertRow("maintenance_parts", {
+      ticket_id: ticketId,
+      component_id: componentId,
+      qty_used: qtyUsed,
+      unit_price_egp: unitPrice,
+      total_price_egp: round2(unitPrice * qtyUsed),
+      created_at: nowIso(),
+    });
+    await updateComponentStock(componentId, -qtyUsed);
+    await insertLedger({
+      itemType: "component",
+      itemId: componentId,
+      deltaQty: -qtyUsed,
+      reason: "adjustment",
+      referenceType: "maintenance_part",
+      referenceId: part.id,
+    });
+    return { ...part, item_name: component.item_name };
   }
   if (pathname.startsWith("/products/") && pathname.endsWith("/bom")) {
     const productId = toInt(pathname.split("/")[2], "id");
@@ -967,6 +1062,31 @@ async function handlePut(pathname, body) {
       email: body.email !== undefined ? body.email || null : current.email,
       updated_at: nowIso(),
     }, [["id", supplierId]]))[0];
+  }
+  if (pathname.startsWith("/maintenance-tickets/")) {
+    const ticketId = toInt(pathname.split("/")[2], "id");
+    const current = await selectSingle("maintenance_tickets", { eq: [["id", ticketId]] });
+    if (!current) throw new Error("Maintenance ticket not found");
+    const nextStatus = body.status !== undefined ? String(body.status) : current.status;
+    if (!["in_progress", "completed"].includes(nextStatus)) throw new Error("Invalid maintenance status");
+    if (current.status === "completed" && nextStatus !== "completed") throw new Error("Completed ticket cannot be reopened");
+    const delivered = body.delivered !== undefined ? Boolean(body.delivered) : Boolean(current.delivered);
+    if (delivered && nextStatus !== "completed") throw new Error("Complete the maintenance ticket before delivery");
+    const updated = (await updateRows("maintenance_tickets", {
+      customer_name: body.customer_name !== undefined ? requireName(body.customer_name, "customer_name") : current.customer_name,
+      phone: body.phone !== undefined ? requireName(body.phone, "phone") : current.phone,
+      device_issue: body.device_issue !== undefined ? requireName(body.device_issue, "device_issue") : current.device_issue,
+      repair_charge_egp:
+        body.repair_charge_egp !== undefined
+          ? toNonNegativeNumber(body.repair_charge_egp, "repair_charge_egp")
+          : current.repair_charge_egp,
+      status: nextStatus,
+      delivered,
+      completed_at: nextStatus === "completed" ? current.completed_at || nowIso() : null,
+      delivered_at: delivered ? current.delivered_at || nowIso() : null,
+      updated_at: nowIso(),
+    }, [["id", ticketId]]))[0];
+    return updated;
   }
   if (pathname.startsWith("/components/intake-records/")) {
     const recordId = toInt(pathname.split("/")[3], "id");
@@ -1165,6 +1285,23 @@ async function handleDelete(pathname) {
       throw withStatus(400, "Supplier is referenced by components");
     }
     await deleteRows("suppliers", [["id", supplierId]]);
+    return { success: true };
+  }
+  if (pathname.startsWith("/maintenance-parts/")) {
+    const partId = toInt(pathname.split("/")[2], "id");
+    const part = await selectSingle("maintenance_parts", { eq: [["id", partId]] });
+    if (!part) throw new Error("Maintenance part not found");
+    const ticket = await selectSingle("maintenance_tickets", { eq: [["id", part.ticket_id]] });
+    if (ticket?.status === "completed") throw new Error("Cannot change parts after completion");
+    await reverseLedgerForReference("maintenance_part", partId);
+    await deleteRows("maintenance_parts", [["id", partId]]);
+    return { success: true };
+  }
+  if (pathname.startsWith("/maintenance-tickets/")) {
+    const ticketId = toInt(pathname.split("/")[2], "id");
+    const parts = await selectRows("maintenance_parts", { eq: [["ticket_id", ticketId]] });
+    for (const part of parts) await reverseLedgerForReference("maintenance_part", part.id);
+    await deleteRows("maintenance_tickets", [["id", ticketId]]);
     return { success: true };
   }
   if (pathname.startsWith("/components/intake-records/")) {

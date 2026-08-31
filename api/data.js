@@ -13,6 +13,8 @@ const TABLES = new Set([
   "finished_stock",
   "inventory_ledger",
   "settings",
+  "maintenance_tickets",
+  "maintenance_parts",
 ]);
 
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
@@ -25,6 +27,33 @@ async function ensureSchema(sql) {
     ALTER TABLE components
     ADD COLUMN IF NOT EXISTS minimum_stock_qty integer
     CHECK (minimum_stock_qty IS NULL OR minimum_stock_qty >= 0)
+  `);
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS maintenance_tickets (
+      id bigint generated always as identity primary key,
+      customer_name text not null,
+      phone text not null,
+      device_issue text not null,
+      status text not null default 'in_progress' check (status in ('in_progress', 'completed')),
+      repair_charge_egp numeric not null default 0 check (repair_charge_egp >= 0),
+      delivered boolean not null default false,
+      opened_at timestamptz not null default now(),
+      completed_at timestamptz,
+      delivered_at timestamptz,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+  await sql.query(`
+    CREATE TABLE IF NOT EXISTS maintenance_parts (
+      id bigint generated always as identity primary key,
+      ticket_id bigint not null references maintenance_tickets(id) on delete cascade,
+      component_id bigint not null references components(id) on delete restrict,
+      qty_used integer not null check (qty_used > 0),
+      unit_price_egp numeric not null default 0 check (unit_price_egp >= 0),
+      total_price_egp numeric not null default 0 check (total_price_egp >= 0),
+      created_at timestamptz not null default now()
+    )
   `);
   await sql.query(`
     ALTER TABLE manufacturing_records
