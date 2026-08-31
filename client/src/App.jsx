@@ -1861,11 +1861,58 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
   );
 }
 
+function escapeInvoiceText(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function printMaintenanceInvoice(ticket, t) {
+  const invoiceWindow = window.open("", "_blank");
+  if (!invoiceWindow) return;
+  invoiceWindow.opener = null;
+  const logoUrl = new URL("diamond-logo.svg", window.location.href).href;
+  const completedDate = ticket.completed_at || ticket.opened_at;
+  invoiceWindow.document.write(`<!doctype html>
+  <html lang="ar" dir="rtl"><head><meta charset="utf-8"><title>maintenance-invoice-${ticket.id}</title>
+  <style>
+    @page { size: A5 portrait; margin: 10mm; }
+    * { box-sizing: border-box; }
+    body { margin: 0; color: #172126; font-family: Tahoma, Arial, sans-serif; background: #fff; }
+    .invoice { min-height: 190mm; border: 1px solid #d6e1e5; border-radius: 12px; overflow: hidden; }
+    .head { padding: 12mm 10mm 7mm; text-align: center; background: linear-gradient(135deg,#f3fbfc,#fff); border-bottom: 3px solid #1596bb; }
+    .logo { width: 100%; max-height: 34mm; object-fit: contain; }
+    h1 { margin: 6mm 0 1mm; font-size: 20px; color: #116f91; }
+    .meta { color: #65737b; font-size: 11px; }
+    .body { padding: 8mm 10mm; }
+    .row { display: grid; grid-template-columns: 34mm 1fr; gap: 5mm; padding: 4mm 0; border-bottom: 1px solid #e6edef; }
+    .label { color: #617078; font-weight: 700; }
+    .value { font-weight: 600; white-space: pre-wrap; }
+    .total { margin-top: 8mm; padding: 6mm; border-radius: 10px; background: #e9f8fa; color: #075f78; text-align: center; font-size: 20px; font-weight: 800; }
+    .footer { padding: 7mm 10mm; text-align: center; color: #76848b; font-size: 10px; }
+  </style></head><body><article class="invoice">
+    <header class="head"><img class="logo" src="${logoUrl}" alt="Diamond for Printer Solutions"><h1>${escapeInvoiceText(t("maintenanceInvoice"))}</h1><div class="meta">#${ticket.id} — ${escapeInvoiceText(new Date(completedDate).toLocaleDateString("ar-EG"))}</div></header>
+    <main class="body">
+      <div class="row"><div class="label">${escapeInvoiceText(t("customerName"))}</div><div class="value">${escapeInvoiceText(ticket.customer_name)}</div></div>
+      <div class="row"><div class="label">${escapeInvoiceText(t("phone"))}</div><div class="value">${escapeInvoiceText(ticket.phone)}</div></div>
+      <div class="row"><div class="label">${escapeInvoiceText(t("deviceIssue"))}</div><div class="value">${escapeInvoiceText(ticket.device_issue)}</div></div>
+      <div class="row"><div class="label">${escapeInvoiceText(t("maintenanceDescription"))}</div><div class="value">${escapeInvoiceText(ticket.maintenance_description || "-")}</div></div>
+      <div class="total">${escapeInvoiceText(t("repairCharge"))}: ${escapeInvoiceText(ticket.repair_charge_egp)} EGP</div>
+    </main>
+    <footer class="footer">DIAMOND FOR PRINTER SOLUTIONS</footer>
+  </article><script>window.addEventListener('load',()=>setTimeout(()=>window.print(),300));<\/script></body></html>`);
+  invoiceWindow.document.close();
+}
+
 function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
   const [activeStage, setActiveStage] = useState("request");
   const [showRequest, setShowRequest] = useState(false);
   const [requestForm, setRequestForm] = useState(blankMaintenanceTicket());
   const [selectedTicketId, setSelectedTicketId] = useState(null);
+  const [editingTicket, setEditingTicket] = useState(null);
   const [partForm, setPartForm] = useState({ component_id: "", qty_used: 1 });
   const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) || null;
   const visibleTickets = tickets.filter((ticket) =>
@@ -1913,7 +1960,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
 
       {activeStage !== "request" && (
         <DataTable
-          columns={[t("customerName"), t("phone"), t("deviceIssue"), t("partsCost"), t("actions")]}
+          columns={[t("customerName"), t("phone"), t("deviceIssue"), t("repairCharge"), t("partsCost"), t("actions")]}
           rows={visibleTickets}
           emptyText={t("noData")}
           renderRow={(ticket) => (
@@ -1921,9 +1968,19 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
               <td>{ticket.customer_name}</td>
               <td>{ticket.phone}</td>
               <td>{ticket.device_issue}</td>
+              <td>{ticket.repair_charge_egp} EGP</td>
               <td>{ticket.parts_cost_egp}</td>
               <td>
                 <button type="button" onClick={() => setSelectedTicketId(ticket.id)}>{t("view")}</button>
+                <button type="button" onClick={() => setEditingTicket({ ...ticket })}>{t("edit")}</button>
+                <button type="button" className="pdfButton" title={t("downloadInvoice")} onClick={() => printMaintenanceInvoice(ticket, t)}>📄 PDF</button>
+                <button type="button" className="danger" onClick={() => {
+                  if (!window.confirm(t("confirmDeleteTicket"))) return;
+                  run(async () => {
+                    await api.delete(`/maintenance-tickets/${ticket.id}`);
+                    await refreshAll();
+                  });
+                }}>{t("delete")}</button>
                 {ticket.status === "completed" && (
                   <label className="checkboxLabel">
                     <input
@@ -1961,6 +2018,32 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
             <textarea placeholder={t("deviceIssue")} value={requestForm.device_issue} onChange={(event) => setRequestForm((state) => ({ ...state, device_issue: event.target.value }))} required />
             <input type="datetime-local" value={requestForm.opened_at} onChange={(event) => setRequestForm((state) => ({ ...state, opened_at: event.target.value }))} />
             <button type="submit" className="primaryButton">{t("save")}</button>
+          </form>
+        </Modal>
+      )}
+
+      {editingTicket && (
+        <Modal title={`${t("edit")} ${t("maintenanceTicket")} #${editingTicket.id}`} onClose={() => setEditingTicket(null)}>
+          <form className="gridForm" onSubmit={(event) => {
+            event.preventDefault();
+            run(async () => {
+              await api.put(`/maintenance-tickets/${editingTicket.id}`, {
+                customer_name: editingTicket.customer_name,
+                phone: editingTicket.phone,
+                device_issue: editingTicket.device_issue,
+                maintenance_description: editingTicket.maintenance_description,
+                repair_charge_egp: Number(editingTicket.repair_charge_egp || 0),
+              });
+              setEditingTicket(null);
+              await refreshAll();
+            });
+          }}>
+            <input placeholder={t("customerName")} value={editingTicket.customer_name} onChange={(event) => setEditingTicket((state) => ({ ...state, customer_name: event.target.value }))} required />
+            <input placeholder={t("phone")} value={editingTicket.phone} onChange={(event) => setEditingTicket((state) => ({ ...state, phone: event.target.value }))} required />
+            <textarea placeholder={t("deviceIssue")} value={editingTicket.device_issue} onChange={(event) => setEditingTicket((state) => ({ ...state, device_issue: event.target.value }))} required />
+            <textarea placeholder={t("maintenanceDescription")} value={editingTicket.maintenance_description || ""} onChange={(event) => setEditingTicket((state) => ({ ...state, maintenance_description: event.target.value }))} />
+            <input type="number" min="0" step="0.01" placeholder={t("repairCharge")} value={editingTicket.repair_charge_egp} onChange={(event) => setEditingTicket((state) => ({ ...state, repair_charge_egp: event.target.value }))} />
+            <button type="submit" className="primaryButton">{t("update")}</button>
           </form>
         </Modal>
       )}
@@ -2008,15 +2091,23 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
           )}
           <div className="ticketTotals">
             <span>{t("partsCost")}: <strong>{selectedTicket.parts_cost_egp} EGP</strong></span>
-            <span>{t("maintenanceProfit")}: <strong>{selectedTicket.maintenance_profit_egp} EGP</strong></span>
+            <span>{t("repairCharge")}: <strong>{selectedTicket.repair_charge_egp} EGP</strong></span>
           </div>
+          {selectedTicket.status === "completed" && (
+            <div className="maintenanceDescriptionBox">
+              <span>{t("maintenanceDescription")}</span>
+              <p>{selectedTicket.maintenance_description || "-"}</p>
+            </div>
+          )}
           {selectedTicket.status === "in_progress" && (
             <form className="gridForm modalSection" onSubmit={(event) => {
               event.preventDefault();
               const input = event.currentTarget.elements.repair_charge_egp;
+              const description = event.currentTarget.elements.maintenance_description;
               run(async () => {
                 await api.put(`/maintenance-tickets/${selectedTicket.id}`, {
                   repair_charge_egp: Number(input.value),
+                  maintenance_description: description.value,
                   status: "completed",
                 });
                 setSelectedTicketId(null);
@@ -2024,6 +2115,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
                 await refreshAll();
               });
             }}>
+              <textarea name="maintenance_description" defaultValue={selectedTicket.maintenance_description || ""} placeholder={t("maintenanceDescription")} required />
               <input name="repair_charge_egp" type="number" min="0" step="0.01" defaultValue={selectedTicket.repair_charge_egp || ""} placeholder={t("repairCharge")} required />
               <button type="submit" className="primaryButton">{t("completeMaintenance")}</button>
             </form>

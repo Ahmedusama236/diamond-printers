@@ -34,6 +34,7 @@ async function ensureSchema(sql) {
       customer_name text not null,
       phone text not null,
       device_issue text not null,
+      maintenance_description text,
       status text not null default 'in_progress' check (status in ('in_progress', 'completed')),
       repair_charge_egp numeric not null default 0 check (repair_charge_egp >= 0),
       delivered boolean not null default false,
@@ -43,6 +44,10 @@ async function ensureSchema(sql) {
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
     )
+  `);
+  await sql.query(`
+    ALTER TABLE maintenance_tickets
+    ADD COLUMN IF NOT EXISTS maintenance_description text
   `);
   await sql.query(`
     CREATE TABLE IF NOT EXISTS maintenance_parts (

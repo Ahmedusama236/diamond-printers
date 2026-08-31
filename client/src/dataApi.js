@@ -847,6 +847,7 @@ async function handlePost(pathname, body) {
       customer_name: requireName(body.customer_name, "customer_name"),
       phone: requireName(body.phone, "phone"),
       device_issue: requireName(body.device_issue, "device_issue"),
+      maintenance_description: body.maintenance_description ? String(body.maintenance_description).trim() : null,
       status: "in_progress",
       repair_charge_egp: 0,
       delivered: false,
@@ -1076,6 +1077,10 @@ async function handlePut(pathname, body) {
       customer_name: body.customer_name !== undefined ? requireName(body.customer_name, "customer_name") : current.customer_name,
       phone: body.phone !== undefined ? requireName(body.phone, "phone") : current.phone,
       device_issue: body.device_issue !== undefined ? requireName(body.device_issue, "device_issue") : current.device_issue,
+      maintenance_description:
+        body.maintenance_description !== undefined
+          ? body.maintenance_description ? String(body.maintenance_description).trim() : null
+          : current.maintenance_description,
       repair_charge_egp:
         body.repair_charge_egp !== undefined
           ? toNonNegativeNumber(body.repair_charge_egp, "repair_charge_egp")

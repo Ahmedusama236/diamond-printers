@@ -125,6 +125,7 @@ create table if not exists maintenance_tickets (
   customer_name text not null,
   phone text not null,
   device_issue text not null,
+  maintenance_description text,
   status text not null default 'in_progress' check (status in ('in_progress', 'completed')),
   repair_charge_egp numeric not null default 0 check (repair_charge_egp >= 0),
   delivered boolean not null default false,

@@ -311,6 +311,30 @@ button.danger {
   gap: 6px;
 }
 
+.pdfButton {
+  border-color: #1596bb;
+  color: #087493;
+  font-weight: 800;
+}
+
+.maintenanceDescriptionBox {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfcfd;
+}
+
+.maintenanceDescriptionBox span {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.maintenanceDescriptionBox p {
+  margin: 7px 0 0;
+  white-space: pre-wrap;
+}
+
 .dataTable tbody tr:hover {
   background: #f5fbfa;
 }
