@@ -1146,9 +1146,14 @@ async function handlePut(pathname, body) {
       updated_at: nowIso(),
     }, [["id", componentId]]);
     if (body.stock_qty !== undefined) {
-      const delta = toNonNegativeInt(body.stock_qty, "stock_qty") - current.stock_qty;
+      const newStockQty = toNonNegativeInt(body.stock_qty, "stock_qty");
+      const delta = newStockQty - Number(current.stock_qty);
       if (delta !== 0) {
-        await updateComponentStock(componentId, delta);
+        await updateRows(
+          "components",
+          { stock_qty: newStockQty, updated_at: nowIso() },
+          [["id", componentId]]
+        );
         await insertLedger({ itemType: "component", itemId: componentId, deltaQty: delta, reason: "adjustment", referenceType: "component", referenceId: componentId });
       }
     }

@@ -650,7 +650,9 @@ function App() {
                         item_name: componentForm.item_name,
                         stock_qty: Number(componentForm.stock_qty),
                         minimum_stock_qty:
-                          componentForm.minimum_stock_qty === ""
+                          componentForm.minimum_stock_qty === "" ||
+                          componentForm.minimum_stock_qty === null ||
+                          componentForm.minimum_stock_qty === undefined
                             ? null
                             : Number(componentForm.minimum_stock_qty),
                         supplier_id: componentForm.supplier_id || null,
