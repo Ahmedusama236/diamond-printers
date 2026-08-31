@@ -32,7 +32,7 @@ async function ensureSchema(sql) {
     CREATE TABLE IF NOT EXISTS maintenance_tickets (
       id bigint generated always as identity primary key,
       customer_name text not null,
-      phone text not null,
+      phone text,
       device_issue text not null,
       maintenance_description text,
       status text not null default 'in_progress' check (status in ('in_progress', 'completed')),
@@ -48,6 +48,10 @@ async function ensureSchema(sql) {
   await sql.query(`
     ALTER TABLE maintenance_tickets
     ADD COLUMN IF NOT EXISTS maintenance_description text
+  `);
+  await sql.query(`
+    ALTER TABLE maintenance_tickets
+    ALTER COLUMN phone DROP NOT NULL
   `);
   await sql.query(`
     CREATE TABLE IF NOT EXISTS maintenance_parts (

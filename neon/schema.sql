@@ -123,7 +123,7 @@ create table if not exists settings (
 create table if not exists maintenance_tickets (
   id bigint generated always as identity primary key,
   customer_name text not null,
-  phone text not null,
+  phone text,
   device_issue text not null,
   maintenance_description text,
   status text not null default 'in_progress' check (status in ('in_progress', 'completed')),

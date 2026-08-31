@@ -845,7 +845,7 @@ async function handlePost(pathname, body) {
     const now = nowIso();
     return insertRow("maintenance_tickets", {
       customer_name: requireName(body.customer_name, "customer_name"),
-      phone: requireName(body.phone, "phone"),
+      phone: body.phone ? String(body.phone).trim() : null,
       device_issue: requireName(body.device_issue, "device_issue"),
       maintenance_description: body.maintenance_description ? String(body.maintenance_description).trim() : null,
       status: "in_progress",
@@ -1075,7 +1075,7 @@ async function handlePut(pathname, body) {
     if (delivered && nextStatus !== "completed") throw new Error("Complete the maintenance ticket before delivery");
     const updated = (await updateRows("maintenance_tickets", {
       customer_name: body.customer_name !== undefined ? requireName(body.customer_name, "customer_name") : current.customer_name,
-      phone: body.phone !== undefined ? requireName(body.phone, "phone") : current.phone,
+      phone: body.phone !== undefined ? (body.phone ? String(body.phone).trim() : null) : current.phone,
       device_issue: body.device_issue !== undefined ? requireName(body.device_issue, "device_issue") : current.device_issue,
       maintenance_description:
         body.maintenance_description !== undefined

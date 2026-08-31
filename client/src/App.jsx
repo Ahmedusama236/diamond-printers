@@ -1875,7 +1875,7 @@ function MaintenanceInvoice({ ticket, t }) {
       </header>
       <div className="invoiceBody">
         <InvoiceRow label={t("customerName")} value={ticket.customer_name} />
-        <InvoiceRow label={t("phone")} value={ticket.phone} />
+        {ticket.phone && <InvoiceRow label={t("phone")} value={ticket.phone} />}
         <InvoiceRow label={t("deviceIssue")} value={ticket.device_issue} />
         <InvoiceRow label={t("maintenanceDescription")} value={ticket.maintenance_description || "-"} />
         <div className="invoiceTotal">{t("repairCharge")}: {ticket.repair_charge_egp} EGP</div>
@@ -1997,7 +1997,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
             });
           }}>
             <input placeholder={t("customerName")} value={requestForm.customer_name} onChange={(event) => setRequestForm((state) => ({ ...state, customer_name: event.target.value }))} required />
-            <input placeholder={t("phone")} value={requestForm.phone} onChange={(event) => setRequestForm((state) => ({ ...state, phone: event.target.value }))} required />
+            <input placeholder={t("phoneOptional")} value={requestForm.phone} onChange={(event) => setRequestForm((state) => ({ ...state, phone: event.target.value }))} />
             <textarea placeholder={t("deviceIssue")} value={requestForm.device_issue} onChange={(event) => setRequestForm((state) => ({ ...state, device_issue: event.target.value }))} required />
             <input type="datetime-local" value={requestForm.opened_at} onChange={(event) => setRequestForm((state) => ({ ...state, opened_at: event.target.value }))} />
             <button type="submit" className="primaryButton">{t("save")}</button>
@@ -2022,7 +2022,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
             });
           }}>
             <input placeholder={t("customerName")} value={editingTicket.customer_name} onChange={(event) => setEditingTicket((state) => ({ ...state, customer_name: event.target.value }))} required />
-            <input placeholder={t("phone")} value={editingTicket.phone} onChange={(event) => setEditingTicket((state) => ({ ...state, phone: event.target.value }))} required />
+            <input placeholder={t("phoneOptional")} value={editingTicket.phone || ""} onChange={(event) => setEditingTicket((state) => ({ ...state, phone: event.target.value }))} />
             <textarea placeholder={t("deviceIssue")} value={editingTicket.device_issue} onChange={(event) => setEditingTicket((state) => ({ ...state, device_issue: event.target.value }))} required />
             <textarea placeholder={t("maintenanceDescription")} value={editingTicket.maintenance_description || ""} onChange={(event) => setEditingTicket((state) => ({ ...state, maintenance_description: event.target.value }))} />
             <input type="number" min="0" step="0.01" placeholder={t("repairCharge")} value={editingTicket.repair_charge_egp} onChange={(event) => setEditingTicket((state) => ({ ...state, repair_charge_egp: event.target.value }))} />
