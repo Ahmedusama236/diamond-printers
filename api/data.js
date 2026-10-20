@@ -32,9 +32,10 @@ async function ensureSchema(database) {
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     item_name text NOT NULL, quantity integer NOT NULL CHECK(quantity>0),
     unit_price numeric NOT NULL CHECK(unit_price>=0), counter bigint CHECK(counter>=0),
-    customer_phone text NOT NULL, customer_name text,
+    customer_phone text, customer_name text,
     sold_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
     request_id uuid UNIQUE NOT NULL)`);
+  await sql.query('ALTER TABLE printer_sales ALTER COLUMN customer_phone DROP NOT NULL');
   await sql.query(`
     ALTER TABLE components
     ADD COLUMN IF NOT EXISTS minimum_stock_qty integer
@@ -105,7 +106,7 @@ async function ensureSchema(database) {
         cost_includes_manufacturing = true
     WHERE cost_includes_manufacturing = false
   `);
-  await runMigration(database,'business_schema_v10',statements);
+  await runMigration(database,'business_schema_v11',statements);
   schemaReady = true;
 }
 
@@ -190,7 +191,9 @@ module.exports = async function handler(req, res) {
     } else if (body.action === "insert") {
       const payload = body.payload || {};
       if (body.table === 'printer_sales') {
-        if (!String(payload.item_name || '').trim() || !String(payload.customer_phone || '').trim()) throw new Error('الصنف وهاتف العميل مطلوبان');
+        if (!String(payload.item_name || '').trim()) throw new Error('الصنف مطلوب');
+        if (payload.quantity === undefined || payload.quantity === null || payload.quantity === '') payload.quantity = 1;
+        payload.customer_phone = String(payload.customer_phone || '').trim() || null;
         if (!Number.isSafeInteger(Number(payload.quantity)) || Number(payload.quantity) <= 0) throw new Error('العدد غير صالح');
         if (payload.unit_price === '' || !Number.isFinite(Number(payload.unit_price)) || Number(payload.unit_price)<0) throw new Error('السعر غير صالح');
         if (payload.counter != null && (!Number.isSafeInteger(Number(payload.counter)) || Number(payload.counter)<0)) throw new Error('العداد غير صالح');

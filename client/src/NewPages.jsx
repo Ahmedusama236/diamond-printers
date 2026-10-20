@@ -69,7 +69,7 @@ export function PrintersPage({api,Modal}) {
         <input placeholder="بحث بالصنف أو العميل أو رقم الفاتورة" value={filters.q} onChange={e=>setFilters(s=>({...s,q:e.target.value}))}/></div>
       <p>{filtered.length} فاتورة — {filtered.reduce((s,r)=>s+Number(r.quantity),0)} طابعة — إجمالي {money(filtered.reduce((s,r)=>s+r.quantity*Number(r.unit_price),0))} جنيه</p>
       <div className="tableScroll"><table className="dataTable"><thead><tr>{['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','الإجمالي','العداد','العميل','الهاتف'].map(t=><th key={t}>{t}</th>)}</tr></thead>
-        <tbody>{filtered.map(r=><tr key={r.id}><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(r.quantity*r.unit_price)}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone}</td></tr>)}
+        <tbody>{filtered.map(r=><tr key={r.id}><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(r.quantity*r.unit_price)}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td></tr>)}
         {!filtered.length&&<tr><td colSpan="9">لا توجد فواتير</td></tr>}</tbody></table></div></>}
     {form&&<Modal title="فاتورة بيع طابعات" onClose={()=>{if(!saving)setForm(null);}}>
       <form className="gridForm" onSubmit={async e=>{
@@ -79,13 +79,13 @@ export function PrintersPage({api,Modal}) {
       }}>
         {error&&<div className="error">{error}</div>}
         <label>الصنف<input required value={form.item_name} onChange={e=>change('item_name',e.target.value)}/></label>
-        <label>العدد<input type="number" required min="1" step="1" value={form.quantity} onChange={e=>change('quantity',e.target.value)}/></label>
+        <label>العدد<input type="number" min="1" step="1" placeholder="1" value={form.quantity} onChange={e=>change('quantity',e.target.value)} onBlur={()=>{if(form.quantity==='')change('quantity',1);}}/></label>
         <label>سعر الوحدة<input type="number" required min="0" step="0.01" value={form.unit_price} onChange={e=>change('unit_price',e.target.value)}/></label>
         <label>العداد (اختياري)<input type="number" min="0" step="1" value={form.counter} onChange={e=>change('counter',e.target.value)}/></label>
-        <label>هاتف العميل<input required type="tel" value={form.customer_phone} onChange={e=>change('customer_phone',e.target.value)}/></label>
+        <label>هاتف العميل (اختياري)<input type="tel" value={form.customer_phone} onChange={e=>change('customer_phone',e.target.value)}/></label>
         <label>اسم العميل (اختياري)<input value={form.customer_name} onChange={e=>change('customer_name',e.target.value)}/></label>
         <label>التاريخ والوقت — القاهرة<input type="datetime-local" required step="1" value={form.sold_at} onChange={e=>change('sold_at',e.target.value)}/></label>
-        <p>الإجمالي: {money(form.quantity*form.unit_price)} جنيه</p>
+        <p>الإجمالي: {money((form.quantity === '' ? 1 : form.quantity)*form.unit_price)} جنيه</p>
         <button disabled={saving} className="primaryButton">{saving?'جارٍ الحفظ…':'حفظ'}</button><button disabled={saving} type="button" onClick={()=>setForm(null)}>إلغاء</button>
       </form></Modal>}
   </section>;

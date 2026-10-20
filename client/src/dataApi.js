@@ -835,10 +835,10 @@ async function handlePost(pathname, body) {
   if (pathname === '/accounts') return authRequest('create',body);
   if (pathname === '/printer-sales') {
     return insertRow('printer_sales', {
-      item_name:requireName(body.item_name),quantity:toPositiveInt(body.quantity,'quantity'),
+      item_name:requireName(body.item_name),quantity:toPositiveInt(body.quantity === '' || body.quantity == null ? 1 : body.quantity,'quantity'),
       unit_price:toNonNegativeNumber(body.unit_price,'unit_price'),
       counter:body.counter === '' || body.counter == null ? null : toNonNegativeInt(body.counter,'counter'),
-      customer_phone:requireName(body.customer_phone,'customer_phone'),
+      customer_phone:body.customer_phone ? String(body.customer_phone).trim() || null : null,
       customer_name:body.customer_name ? String(body.customer_name).trim() : null,
       sold_at:toUtcIsoFromInput(body.sold_at,'sold_at'),request_id:body.request_id,
     });

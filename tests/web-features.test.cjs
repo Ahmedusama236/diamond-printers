@@ -61,16 +61,21 @@ test('data API disallows querying account credential tables',async()=>{
   assert.equal(res.code,400);assert.match(res.body.error,/not allowed/);
 });
 test('printer invoice validates stock-independent fields and supports idempotent retry',async()=>{
-  let inserted='';
+  let inserted='',values=[];
   const sql={query:async(q,p,options)=>{
     if(q.includes('JOIN app_users'))return [{id:1,role:'user'}];
-    if(options?.fullResults){inserted=q;return {rows:[{id:10}],fields:[]};}
+    if(options?.fullResults){inserted=q;values=p;return {rows:[{id:10}],fields:[]};}
     return [];
   }};
   const handler=handlerWithDatabase('../api/data',sql);
   const req={method:'POST',headers:{cookie:'diamond_session=x'},body:{action:'insert',table:'printer_sales',payload:{item_name:'Printer',quantity:2,unit_price:100,counter:null,customer_phone:'01000000000',customer_name:null,sold_at:'2026-10-21T10:00:00Z',request_id:'12345678-1234-1234-1234-123456789012'}}};
   const res=response();await handler(req,res);assert.equal(res.code,200);
   assert.match(inserted,/ON CONFLICT\(request_id\)/);assert.doesNotMatch(inserted,/finished_stock/);
+  delete req.body.payload.quantity;
+  req.body.payload.customer_phone='';
+  const optional=response();await handler(req,optional);assert.equal(optional.code,200);
+  assert.equal(req.body.payload.quantity,1);assert.equal(req.body.payload.customer_phone,null);
+  assert.ok(values.includes(null));
   req.body.payload.quantity=1.5;
   const invalid=response();await handler(req,invalid);assert.equal(invalid.code,400);
 });
