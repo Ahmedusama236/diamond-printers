@@ -1,5 +1,6 @@
 const { neon } = require("@neondatabase/serverless");
 const { ensureAuth, currentUser } = require('../lib/auth');
+const {runMigration} = require('../lib/migrations');
 
 const TABLES = new Set([
   "suppliers",
@@ -23,8 +24,10 @@ const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
 const NUMERIC_OIDS = new Set([20, 21, 23, 700, 701, 1700]);
 let schemaReady = false;
 
-async function ensureSchema(sql) {
+async function ensureSchema(database) {
   if (schemaReady) return;
+  const statements=[];
+  const sql={query:async(statement)=>{statements.push(statement);}};
   await sql.query(`CREATE TABLE IF NOT EXISTS printer_sales (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     item_name text NOT NULL, quantity integer NOT NULL CHECK(quantity>0),
@@ -102,6 +105,7 @@ async function ensureSchema(sql) {
         cost_includes_manufacturing = true
     WHERE cost_includes_manufacturing = false
   `);
+  await runMigration(database,'business_schema_v10',statements);
   schemaReady = true;
 }
 

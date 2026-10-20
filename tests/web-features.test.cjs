@@ -6,6 +6,7 @@ const path = require('node:path');
 const {hashPassword,verifyPassword,currentUser,setCookie} = require('../lib/auth');
 
 function handlerWithDatabase(file, sql) {
+  if(!sql.transaction)sql.transaction=async queries=>Promise.all(queries);
   const original = Module._load;
   Module._load = function(name,...args) {
     if(name==='@neondatabase/serverless') return {neon:()=>sql};
@@ -108,4 +109,20 @@ test('last active administrator cannot be disabled',async()=>{
   const handler=handlerWithDatabase('../api/auth',sql);const res=response();
   await handler({method:'POST',headers:{cookie:'diamond_session=x'},body:{action:'update',id:1,username:'admin',role:'user',active:false}},res);
   assert.equal(res.code,400);assert.match(res.body.error,/آخر مدير/);
+});
+test('parallel initialization shares one locked migration and persists a version marker',async()=>{
+  const {runMigration}=require('../lib/migrations');
+  let calls=0;const statements=[];
+  const sql={query:q=>{statements.push(q);return q;},transaction:async()=>{calls++;await new Promise(resolve=>setTimeout(resolve,10));}};
+  await Promise.all(Array.from({length:15},()=>runMigration(sql,'parallel_test_v1',['CREATE TABLE IF NOT EXISTS example(id integer)'])));
+  assert.equal(calls,1);
+  assert.match(statements[0],/pg_advisory_xact_lock/);
+  assert.match(statements.join('\n'),/IF NOT EXISTS \(SELECT 1 FROM app_schema_migrations/);
+  await runMigration(sql,'parallel_test_v1',[]);assert.equal(calls,1);
+});
+test('failed schema initialization can be retried instead of caching failure',async()=>{
+  const {runMigration}=require('../lib/migrations');let calls=0;
+  const sql={query:q=>q,transaction:async()=>{calls++;if(calls===1)throw new Error('temporary failure');}};
+  await assert.rejects(runMigration(sql,'retry_test_v1',[]));
+  await runMigration(sql,'retry_test_v1',[]);assert.equal(calls,2);
 });
