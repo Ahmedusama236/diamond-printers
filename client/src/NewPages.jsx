@@ -49,11 +49,12 @@ export function Dashboard({api}) {
 }
 function link(event){if(!event.ctrlKey&&!event.metaKey){event.preventDefault();navigate(event.currentTarget.getAttribute('href'));}}
 
-export function PrintersPage({api,Modal}) {
+export function PrintersPage({api,Modal,DataTable}) {
   const location=useLocation();
   const history=location.startsWith('/printers/sales');
   const [rows,setRows]=useState([]),[form,setForm]=useState(null),[saving,setSaving]=useState(false),[error,setError]=useState('');
   const lock=useRef(false);
+  useEffect(()=>{if(new URLSearchParams(location.split('?')[1]||'').get('new')==='1'){setForm(newPrinterInvoice());navigate('/printers/sell');}},[location]);
   const [filters,setFilters]=useState({from:'',to:'',q:''});
   const load=async()=>{setRows(await api.get('/printer-sales'));};
   useEffect(()=>{load().catch(e=>setError(e.message));},[]);
@@ -68,9 +69,7 @@ export function PrintersPage({api,Modal}) {
         <label>إلى <input type="date" value={filters.to} onChange={e=>setFilters(s=>({...s,to:e.target.value}))}/></label>
         <input placeholder="بحث بالصنف أو العميل أو رقم الفاتورة" value={filters.q} onChange={e=>setFilters(s=>({...s,q:e.target.value}))}/></div>
       <p>{filtered.length} فاتورة — {filtered.reduce((s,r)=>s+Number(r.quantity),0)} طابعة — إجمالي {money(filtered.reduce((s,r)=>s+r.quantity*Number(r.unit_price),0))} جنيه</p>
-      <div className="tableScroll"><table className="dataTable"><thead><tr>{['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','الإجمالي','العداد','العميل','الهاتف'].map(t=><th key={t}>{t}</th>)}</tr></thead>
-        <tbody>{filtered.map(r=><tr key={r.id}><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(r.quantity*r.unit_price)}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td></tr>)}
-        {!filtered.length&&<tr><td colSpan="9">لا توجد فواتير</td></tr>}</tbody></table></div></>}
+      <DataTable searchable={false} columns={['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','الإجمالي','العداد','العميل','الهاتف']} rows={filtered} secondaryColumns={[6,8]} emptyText="لا توجد فواتير" renderRow={r=><><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(r.quantity*r.unit_price)}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td></>}/></>}
     {form&&<Modal title="فاتورة بيع طابعات" onClose={()=>{if(!saving)setForm(null);}}>
       <form className="gridForm" onSubmit={async e=>{
         e.preventDefault();if(lock.current)return;lock.current=true;setSaving(true);setError('');
@@ -91,14 +90,14 @@ export function PrintersPage({api,Modal}) {
   </section>;
 }
 
-export function AccountsPage({api,Modal,user}) {
+export function AccountsPage({api,Modal,user,DataTable}) {
   const [rows,setRows]=useState([]),[form,setForm]=useState(null),[error,setError]=useState(''),[saving,setSaving]=useState(false);
   const load=()=>api.get('/accounts').then(setRows);
   useEffect(()=>{if(user?.role==='admin')load().catch(e=>setError(e.message));},[user?.role]);
   if(user?.role!=='admin')return <p>إدارة الحسابات متاحة للمدير فقط.</p>;
   return <div><div className="sectionHeader"><h3>إدارة الحسابات</h3><button className="primaryButton" onClick={()=>{setError('');setForm({username:'',password:'',role:'user',active:true});}}>إنشاء حساب</button></div>
     {error&&<div className="error">{error}</div>}
-    <table className="dataTable"><thead><tr><th>اسم المستخدم</th><th>الصلاحية</th><th>الحالة</th><th>إجراءات</th></tr></thead><tbody>{rows.map(r=><tr key={r.id}><td>{r.username}</td><td>{r.role==='admin'?'مدير':'مستخدم'}</td><td>{r.active?'فعال':'معطل'}</td><td><button onClick={()=>{setError('');setForm({...r,password:''});}}>تعديل</button></td></tr>)}</tbody></table>
+    <DataTable columns={['اسم المستخدم','الصلاحية','الحالة','إجراءات']} rows={rows} emptyText="لا توجد حسابات" renderRow={r=><><td>{r.username}</td><td>{r.role==='admin'?'مدير':'مستخدم'}</td><td><span className={r.active?'statusActive':'statusInactive'}>{r.active?'فعال':'معطل'}</span></td><td><button onClick={()=>{setError('');setForm({...r,password:''});}}>تعديل</button></td></>}/>
     {form&&<Modal title={form.id?'تعديل الحساب':'إنشاء حساب'} onClose={()=>{if(!saving)setForm(null);}}><form className="gridForm" onSubmit={async e=>{
       e.preventDefault();if(saving)return;setSaving(true);setError('');
       try{if(form.id)await api.put(`/accounts/${form.id}`,form);else await api.post('/accounts',form);

@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { Children, cloneElement, isValidElement, useEffect, useMemo, useRef, useState } from "react";
 import { api, buildQuery } from "./api";
 import { t as tr } from "./i18n";
 import { navigate, paths, tabForLocation, useLocation, useStage } from './navigation';
-import { Dashboard, PrintersPage, AccountsPage } from './NewPages';
+import { PrintersPage, AccountsPage } from './NewPages';
+import { Overview } from './Overview';
+import { WorkspaceNavigation, PageIntro } from './Workspace';
+import {DateTime} from 'luxon';
 
 const TABS = [
   'dashboard',
@@ -99,12 +102,8 @@ function blankLoginForm() {
 
 function toLocalDateTimeValue(isoString) {
   if (!isoString) return "";
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (v) => String(v).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
-    date.getHours()
-  )}:${pad(date.getMinutes())}`;
+  const date=DateTime.fromISO(isoString).setZone('Africa/Cairo');
+  return date.isValid?date.toFormat("yyyy-MM-dd'T'HH:mm:ss"):'';
 }
 
 function nowLocalDateTimeValue() {
@@ -112,19 +111,17 @@ function nowLocalDateTimeValue() {
 }
 
 function nowLocalDateValue() {
-  const date = new Date();
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (v) => String(v).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  return DateTime.now().setZone('Africa/Cairo').toISODate();
 }
 
 function App() {
-  const [language, setLanguage] = useState("en");
+  const [language, setLanguage] = useState("ar");
   const location = useLocation();
   const activeTab = tabForLocation(location);
   const setActiveTab = (tab) => navigate(paths[tab] || '/dashboard');
   const [currentUser,setCurrentUser] = useState(null);
   const [busy, setBusy] = useState(false);
+  const actionLock = useRef(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
   const [authChecked, setAuthChecked] = useState(false);
@@ -183,6 +180,23 @@ function App() {
     checkAuthStatus();
   }, []);
 
+  useEffect(()=>{if(!info)return;const timer=setTimeout(()=>setInfo(''),5000);return()=>clearTimeout(timer);},[info]);
+  useEffect(()=>{
+    const expired=()=>{setIsAuthenticated(false);setLoginError(language==='ar'?'انتهت الجلسة، سجّل الدخول مرة أخرى':'Session expired. Please sign in again.');navigate('/login');};
+    window.addEventListener('diamond:session-expired',expired);return()=>window.removeEventListener('diamond:session-expired',expired);
+  },[language]);
+
+  useEffect(() => {
+    if (!isAuthenticated || activeTab === 'dashboard') return;
+    let cancelled=false;
+    const jobs = activeTab==='manufacturing'?[refreshManufacturing]:activeTab==='sales'?[refreshSales]:activeTab==='maintenance'?[refreshMaintenance]:activeTab==='damaged'?[refreshDamaged]:activeTab==='shortage'?[refreshShortages]:[];
+    if(['suppliers','components','purchases','shortage'].includes(activeTab))jobs.push(()=>api.get('/suppliers').then(setSuppliers));
+    if(['components','inventory','purchases','productsBom','maintenance','damaged'].includes(activeTab))jobs.push(()=>api.get('/components').then(setComponents));
+    if(['productsBom','manufacturing','sales','inventory'].includes(activeTab))jobs.push(()=>api.get('/products').then(setProducts));
+    Promise.all(jobs.map(job=>job())).catch(e=>{if(!cancelled&&!handleRequestError(e))setError(e.message);});
+    return ()=>{cancelled=true;};
+  }, [isAuthenticated,activeTab]);
+
   useEffect(() => {
     if (!isAuthenticated) {
       return undefined;
@@ -239,8 +253,11 @@ function App() {
   }, [inventoryQuery]);
 
   useEffect(() => {
-    if (!isAuthenticated) return undefined;
+    if (!isAuthenticated || activeTab === 'dashboard') return undefined;
+    let inFlight=false;
     const refreshStock = async () => {
+      if (document.hidden || inFlight || actionLock.current) return;
+      inFlight=true;
       try {
         const [componentsPayload, shortagePayload] = await Promise.all([
           api.get("/components"),
@@ -250,11 +267,12 @@ function App() {
         setShortages(shortagePayload);
       } catch (e) {
         if (e?.status === 401) setIsAuthenticated(false);
-      }
+      } finally {inFlight=false;}
     };
-    const interval = setInterval(refreshStock, 15000);
-    return () => clearInterval(interval);
-  }, [isAuthenticated]);
+    const interval = setInterval(refreshStock, 30000);
+    document.addEventListener('visibilitychange',refreshStock);
+    return () => {clearInterval(interval);document.removeEventListener('visibilitychange',refreshStock);};
+  }, [isAuthenticated,activeTab]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -309,24 +327,8 @@ function App() {
   async function initialize() {
     setError("");
     try {
-      const [langPayload, suppliersPayload, componentsPayload, productsPayload] =
-        await Promise.all([
-          api.get("/settings/language"),
-          api.get("/suppliers"),
-          api.get("/components"),
-          api.get("/products"),
-        ]);
-      setLanguage(langPayload.language || "en");
-      setSuppliers(suppliersPayload);
-      setComponents(componentsPayload);
-      setProducts(productsPayload);
-      await Promise.all([
-        refreshManufacturing(),
-        refreshSales(),
-        refreshDamaged(),
-        refreshShortages(),
-        refreshMaintenance(),
-      ]);
+      const langPayload = await api.get('/settings/language');
+      setLanguage(langPayload.language || "ar");
     } catch (e) {
       if (!handleRequestError(e)) {
         setError(e.message);
@@ -371,16 +373,20 @@ function App() {
   }
 
   async function run(action) {
+    if (actionLock.current) return;
+    actionLock.current = true;
     setBusy(true);
     setError("");
     setInfo("");
     try {
       await action();
+      setInfo(language==='ar'?'تم حفظ التغييرات بنجاح':'Changes saved successfully');
     } catch (e) {
       if (!handleRequestError(e)) {
         setError(e.message);
       }
     } finally {
+      actionLock.current = false;
       setBusy(false);
     }
   }
@@ -469,18 +475,25 @@ function App() {
     return (
       <div className="loginShell">
         <section className="loginCard">
+          <img className="loginLogo" src="/diamond-logo.png" alt="Diamond for Printer Solutions"/>
           <p className="loginEyebrow">{t("loginRequired")}</p>
           <h1>{t("appTitle")}</h1>
           <p className="subtitle">EGP | Africa/Cairo</p>
           {loginError && <div className="error">{loginError}</div>}
           <form className="loginForm" onSubmit={handleLoginSubmit}>
             <input
+              required
+              autoComplete="username"
+              aria-label={t("username")}
               placeholder={t("username")}
               value={loginForm.username}
               onChange={(e) => setLoginForm((s) => ({ ...s, username: e.target.value }))}
             />
             <input
               type="password"
+              required
+              autoComplete="current-password"
+              aria-label={t("password")}
               placeholder={t("password")}
               value={loginForm.password}
               onChange={(e) => setLoginForm((s) => ({ ...s, password: e.target.value }))}
@@ -495,7 +508,8 @@ function App() {
   }
 
   return (
-    <div className="app">
+    <div className="app modernWorkspace">
+      <WorkspaceNavigation activeTab={activeTab} language={language} shortageCount={shortages.length} />
       <header className="topbar">
         <div className="brandHeader">
           <img src="/diamond-logo.png" alt="Diamond for Printer Solutions" className="siteLogo" />
@@ -528,7 +542,7 @@ function App() {
         </div>
       </header>
 
-      <nav className="tabs">
+      <nav className="tabs legacyTabs" aria-hidden="true">
         {TABS.map((tab) => (
           <a
             key={tab}
@@ -546,12 +560,13 @@ function App() {
       </nav>
 
       {busy && <div className="notice">{language === "ar" ? "جاري التحميل..." : "Loading..."}</div>}
-      {error && <div className="error">{error}</div>}
-      {info && <div className="info">{info}</div>}
+      {error && <div className="error" role="alert">{error}<button className="feedbackClose" aria-label={language==='ar'?'إغلاق':'Dismiss'} onClick={()=>setError('')}>×</button></div>}
+      {info && <div className="info" role="status">{info}</div>}
 
       <main>
-        {activeTab === 'dashboard' && <Dashboard api={api} />}
-        {activeTab === 'printers' && <PrintersPage api={api} Modal={Modal} />}
+        <PageIntro activeTab={activeTab} language={language} user={currentUser}/>
+        {activeTab === 'dashboard' && <Overview api={api} language={language} onShortages={setShortages} />}
+        {activeTab === 'printers' && <PrintersPage api={api} Modal={Modal} DataTable={DataTable} />}
         {activeTab === "suppliers" && (
           <section>
             <SectionHeader
@@ -1278,7 +1293,7 @@ function App() {
               <button onClick={()=>navigate('/settings')}>{t('lang')}</button>
               <button onClick={()=>navigate('/settings/accounts')}>إدارة الحسابات</button>
             </div>
-            {location.startsWith('/settings/accounts') && <AccountsPage api={api} Modal={Modal} user={currentUser} />}
+            {location.startsWith('/settings/accounts') && <AccountsPage api={api} Modal={Modal} DataTable={DataTable} user={currentUser} />}
             <div className="gridForm">
               <button
                 onClick={() =>
@@ -1314,6 +1329,7 @@ function App() {
 function PurchasesTab({ t, suppliers, components, run, api, refreshAll }) {
   const [form, setForm] = useState(blankIntake());
   const [showForm, setShowForm] = useState(false);
+  useCreateIntent(()=>{setForm(blankIntake());setShowForm(true);});
   const normalizedName = form.name.trim().toLowerCase();
   const suggestions = components
     .filter((component) => component.item_name.toLowerCase().includes(normalizedName))
@@ -1603,6 +1619,7 @@ function ProductsBomTab({
 function ManufacturingTab({ t, products, form, setForm, records, run, api, refreshAll }) {
   const [activeStage, setActiveStage] = useStage({order:'/manufacturing/orders',in_progress:'/manufacturing/in-progress',completed:'/manufacturing/completed'},'order');
   const [showForm, setShowForm] = useState(false);
+  useCreateIntent(()=>{setForm(blankManufacturing());setShowForm(true);});
   const stageRecords = records.filter((record) => (record.status || "completed") === activeStage);
 
   const moveRecord = (record, status) =>
@@ -1740,6 +1757,7 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
 
 function SalesTab({ t, products, form, setForm, records, run, api, refreshAll }) {
   const [showForm, setShowForm] = useState(false);
+  useCreateIntent(()=>{setForm(blankSale());setShowForm(true);});
   const location=useLocation();
   const unpaidOnly=new URLSearchParams(location.split('?')[1] || '').get('payment')==='unpaid';
   return (
@@ -1794,6 +1812,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
         <input
           type="number"
           min="1"
+          placeholder={t("unitsSold")}
           value={form.units_sold}
           onChange={(e) => setForm((s) => ({ ...s, units_sold: e.target.value }))}
         />
@@ -1801,6 +1820,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           type="number"
           min="0"
           step="0.01"
+          placeholder={t("unitSellPrice")}
           value={form.unit_sell_price_egp}
           onChange={(e) => setForm((s) => ({ ...s, unit_sell_price_egp: e.target.value }))}
         />
@@ -1833,6 +1853,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           t("manufacturingPaid"),
           t("actions"),
         ]}
+        secondaryColumns={[3,4,7]}
         rows={unpaidOnly ? records.filter(row=>!row.is_accounted) : records}
         emptyText={t("noData")}
         renderRow={(r) => (
@@ -1922,6 +1943,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
   const [activeStage, setActiveStage] = useStage({request:'/maintenance/request',in_progress:'/maintenance/in-progress',completed:'/maintenance/completed'},'request');
   const [showRequest, setShowRequest] = useState(false);
   const [requestForm, setRequestForm] = useState(blankMaintenanceTicket());
+  useCreateIntent(()=>{setRequestForm(blankMaintenanceTicket());setShowRequest(true);});
   const [selectedTicketId, setSelectedTicketId] = useState(null);
   const [editingTicket, setEditingTicket] = useState(null);
   const [invoiceTicket, setInvoiceTicket] = useState(null);
@@ -2425,23 +2447,61 @@ function SectionHeader({ title, actionLabel, onAction, compact = false }) {
   );
 }
 
+function useCreateIntent(onCreate) {
+  const location=useLocation();
+  useEffect(()=>{
+    const url=new URL(window.location.href);
+    if(url.searchParams.get('new')==='1'){
+      onCreate();url.searchParams.delete('new');navigate(url.pathname+url.search);
+    }
+  },[location]);
+}
+
+function labelFields(children,insideLabel=false) {
+  const ar=document.documentElement.lang==='ar';
+  return Children.map(children,child=>{
+    if(!isValidElement(child))return child;
+    if(child.type==='input'&&child.props.type==='datetime-local')child=cloneElement(child,{step:child.props.step||1});
+    if(['input','select','textarea'].includes(child.type)&&!insideLabel&&child.props.type!=='checkbox'&&child.props.type!=='hidden'){
+      const label=child.props['aria-label']||child.props.placeholder||(['datetime-local','date'].includes(child.props.type)?(ar?'التاريخ والوقت':'Date and time'):child.type==='select'?Children.toArray(child.props.children).find(c=>c.type==='option')?.props.children:null);
+      if(label)return <label className="autoField"><span>{label}{child.props.required&&<small aria-hidden="true"> *</small>}</span>{child}</label>;
+    }
+    return child.props.children?cloneElement(child,{},labelFields(child.props.children,insideLabel||child.type==='label')):child;
+  });
+}
+
 function Modal({ title, onClose, wide = false, children }) {
+  const card=useRef(null),dirty=useRef(false),closeRef=useRef(onClose);
+  closeRef.current=onClose;
+  const close=()=>{if(dirty.current&&!window.confirm(document.documentElement.lang==='ar'?'فيه تغييرات لم تُحفظ. تريد إغلاق النافذة؟':'Discard unsaved changes?'))return;closeRef.current();};
   useEffect(() => {
+    const previousFocus=document.activeElement;
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const handleKeyDown = (event) => {
-      if (event.key === "Escape") onClose();
+      if(Array.from(document.querySelectorAll('[role=dialog]')).at(-1)!==card.current)return;
+      if (event.key === "Escape") {event.preventDefault();event.stopPropagation();close();}
+      if(event.key==='Tab'){
+        const focusable=Array.from(card.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')||[]).filter(el=>el.getClientRects().length);
+        const first=focusable[0],last=focusable[focusable.length-1];
+        if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
+        else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
+      }
     };
+    const timer=setTimeout(()=>(card.current?.querySelector('input,select,textarea')||card.current?.querySelector('button'))?.focus(),0);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
+      clearTimeout(timer);previousFocus?.focus?.();
       document.body.style.overflow = previousOverflow;
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [onClose]);
+  }, []);
 
   return (
-    <div className="modalBackdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modalBackdrop" role="presentation" onMouseDown={close}>
       <div
+        ref={card}
+        onChangeCapture={event=>{if(event.target.closest('form'))dirty.current=true;}}
         className={`modalCard${wide ? " modalCardWide" : ""}`}
         role="dialog"
         aria-modal="true"
@@ -2450,11 +2510,12 @@ function Modal({ title, onClose, wide = false, children }) {
       >
         <div className="modalHeader">
           <h3>{title}</h3>
-          <button type="button" className="modalClose" onClick={onClose} aria-label="Close">
+          <button type="button" className="modalClose" onClick={close} aria-label={document.documentElement.lang==='ar'?'إغلاق':'Close'}>
             ×
           </button>
         </div>
-        <div className="modalBody">{children}</div>
+        <div className="modalBody">{labelFields(children)}</div>
+        {Children.toArray(children).some(child=>child?.type==='form')&&<div className="modalFooter"><button type="button" onClick={close}>{document.documentElement.lang==='ar'?'إلغاء':'Cancel'}</button></div>}
       </div>
     </div>
   );
@@ -2484,24 +2545,47 @@ function Metric({ label, value }) {
   );
 }
 
-function DataTable({ columns, rows, renderRow, emptyText }) {
+function DataTable({ columns, rows, renderRow, emptyText, secondaryColumns=[], searchable=true }) {
+  const ar=document.documentElement.lang==='ar';
+  const location=useLocation(),url=new URL(window.location.href);
+  const [q,setQ]=useState(searchable?url.searchParams.get('q')||'':''),[page,setPage]=useState(1),[detail,setDetail]=useState(null);
+  const [from,setFrom]=useState(searchable?url.searchParams.get('from')||'':''),[to,setTo]=useState(searchable?url.searchParams.get('to')||'':'');
+  const dateKey=['sold_at','received_at','produced_at','opened_at','damaged_at'].find(key=>rows.some(row=>row[key]));
+  const filtered=rows.filter(row=>{
+    if(q&&!Object.values(row).filter(v=>typeof v!=='object').join(' ').toLocaleLowerCase().includes(q.toLocaleLowerCase()))return false;
+    if(dateKey&&(from||to)){
+      const date=new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Cairo',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(row[dateKey]));
+      if((from&&date<from)||(to&&date>to))return false;
+    }return true;
+  });
+  const pages=Math.max(1,Math.ceil(filtered.length/20)),current=Math.min(page,pages);
+  const update=(key,value)=>{const next=new URL(window.location.href);value?next.searchParams.set(key,value):next.searchParams.delete(key);navigate(next.pathname+next.search);setPage(1);};
+  useEffect(()=>{if(!searchable)return;const params=new URLSearchParams(location.split('?')[1]||'');setQ(params.get('q')||'');setFrom(params.get('from')||'');setTo(params.get('to')||'');setPage(1);},[location,searchable]);
+  const visible=columns.map((_,i)=>i).filter(i=>!secondaryColumns.includes(i));
+  const detailValues=row=>Children.toArray(renderRow(row).props.children);
   return (
+    <div className="tableWorkspace">
+    {searchable&&<div className="tableToolbar"><label className="tableSearch"><span>{ar?'بحث':'Search'}</span><input type="search" placeholder={ar?'اكتب للبحث في السجلات…':'Search records…'} value={q} onChange={e=>{setQ(e.target.value);update('q',e.target.value);}}/></label>{dateKey&&<div className="tableDates"><label>{ar?'من':'From'}<input type="date" value={from} max={to||undefined} onChange={e=>{setFrom(e.target.value);update('from',e.target.value);}}/></label><label>{ar?'إلى':'To'}<input type="date" value={to} min={from||undefined} onChange={e=>{setTo(e.target.value);update('to',e.target.value);}}/></label></div>}<span className="recordCount">{filtered.length} {ar?'سجل':'records'}</span></div>}
     <div className="tableScroll">
     <table className="dataTable">
       <thead>
-        <tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr>
+        <tr>{visible.map(i => <th key={i}>{columns[i]}</th>)}{secondaryColumns.length>0&&<th>{ar?'تفاصيل':'Details'}</th>}</tr>
       </thead>
       <tbody>
-        {!rows.length && (
+        {!filtered.length && (
           <tr>
-            <td colSpan={columns.length}>{emptyText}</td>
+            <td className="emptyTable" colSpan={visible.length+(secondaryColumns.length?1:0)}>{q||from||to?(ar?'لا توجد نتائج مطابقة للفلاتر':'No matching records'):emptyText}</td>
           </tr>
         )}
-        {rows.map((row, index) => (
-          <tr key={row.id ?? `${index}`}>{renderRow(row)}</tr>
-        ))}
+        {filtered.slice((current-1)*20,current*20).map((row,index)=>{
+          const cells=detailValues(row);
+          return <tr key={row.id??index}>{visible.map(i=><td key={i} data-label={columns[i]}>{cells[i]?.props?.children}</td>)}{secondaryColumns.length>0&&<td data-label={ar?'تفاصيل':'Details'}><button onClick={()=>setDetail(row)}>{ar?'عرض التفاصيل':'View details'}</button></td>}</tr>;
+        })}
       </tbody>
     </table>
+    </div>
+    {pages>1&&<div className="tablePagination"><button disabled={current===1} onClick={()=>setPage(current-1)}>{ar?'السابق':'Previous'}</button><span>{current} / {pages}</span><button disabled={current===pages} onClick={()=>setPage(current+1)}>{ar?'التالي':'Next'}</button></div>}
+    {detail&&<Modal title={ar?'تفاصيل السجل':'Record details'} onClose={()=>setDetail(null)}><dl className="recordDetails">{detailValues(detail).map((cell,i)=><div key={i}><dt>{columns[i]}</dt><dd>{cell.props.children}</dd></div>)}</dl></Modal>}
     </div>
   );
 }

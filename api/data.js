@@ -162,11 +162,29 @@ module.exports = async function handler(req, res) {
   try {
     const sql = neon(process.env.DATABASE_URL);
     await ensureAuth(sql);
-    if (!(await currentUser(sql, req))) return res.status(401).json({error:'Authentication required'});
+    const user = await currentUser(sql, req);
+    if (!user) return res.status(401).json({error:'Authentication required'});
     if (req.headers.origin && req.headers.host && new URL(req.headers.origin).host !== req.headers.host) return res.status(403).json({error:'Invalid origin'});
     res.setHeader('Cache-Control','no-store');
     await ensureSchema(sql);
     const body = req.body || {};
+    if(body.action === 'business') {
+      const {executeOperation} = require('../lib/operations');
+      await runMigration(sql,'modern_operations_v1',[
+        `CREATE TABLE IF NOT EXISTS app_operation_requests (
+          user_id bigint NOT NULL, request_id uuid NOT NULL, fingerprint text NOT NULL,
+          result jsonb, created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY(user_id,request_id))`,
+        'ALTER TABLE app_operation_requests ENABLE ROW LEVEL SECURITY',
+        // Data-only recovery snapshot, created once before the first modern operation.
+        'CREATE SCHEMA IF NOT EXISTS diamond_backup_20261021',
+        `LOCK TABLE ${Array.from(TABLES).map(table=>'public.'+table).join(',')} IN SHARE MODE`,
+        ...Array.from(TABLES).map(table=>`CREATE TABLE IF NOT EXISTS diamond_backup_20261021.${table} AS TABLE public.${table}`),
+        'REVOKE ALL ON SCHEMA diamond_backup_20261021 FROM PUBLIC',
+      ]);
+      const data=await executeOperation(process.env.DATABASE_URL,user,body);
+      return res.status(200).json({data});
+    }
+    if(body.action !== 'select') return res.status(409).json({error:'تم تحديث النظام. حدّث الصفحة لإتمام العملية بأمان.'});
     const table = tableName(body.table);
     const params = [];
     let statement;
@@ -228,6 +246,7 @@ module.exports = async function handler(req, res) {
     const rows = await queryDatabase(sql, statement, params);
     return res.status(200).json({ data: rows });
   } catch (error) {
-    return res.status(400).json({ error: error.message || "Database request failed" });
+    const messages={'23503':'لا يمكن إتمام العملية لارتباط السجل ببيانات أخرى.','23505':'هذا السجل موجود بالفعل.','23514':'القيم المدخلة غير صالحة.','57014':'استغرقت العملية وقتًا أطول من المتوقع. حاول مرة أخرى.'};
+    return res.status(error.status || 400).json({ error: messages[error.code] || error.message || "Database request failed" });
   }
 };

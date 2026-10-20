@@ -15,7 +15,8 @@
     "build:desktop": "npm --prefix client run build && electron-builder --win portable"
   },
   "dependencies": {
-    "@neondatabase/serverless": "^1.1.0"
+    "@neondatabase/serverless": "^1.1.0",
+    "ws": "^8.22.0"
   },
   "devDependencies": {
     "electron": "^37.2.6",
