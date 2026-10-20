@@ -1,5 +1,7 @@
 export const dictionaries = {
   en: {
+    dashboard: 'Dashboard',
+    printers: 'Printers',
     appTitle: "Diamond Printers Manufacturing Manager",
     lang: "Language",
     english: "English",
@@ -136,6 +138,8 @@ export const dictionaries = {
     sessionExpired: "Your session expired. Please sign in again.",
   },
   ar: {
+    dashboard: 'لوحة التحكم',
+    printers: 'الطابعات',
     appTitle: "نظام إدارة التصنيع - دايموند برينترز",
     lang: "اللغة",
     english: "الإنجليزية",

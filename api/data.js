@@ -1,4 +1,5 @@
 const { neon } = require("@neondatabase/serverless");
+const { ensureAuth, currentUser } = require('../lib/auth');
 
 const TABLES = new Set([
   "suppliers",
@@ -15,6 +16,7 @@ const TABLES = new Set([
   "settings",
   "maintenance_tickets",
   "maintenance_parts",
+  "printer_sales",
 ]);
 
 const IDENTIFIER = /^[a-z_][a-z0-9_]*$/;
@@ -23,6 +25,13 @@ let schemaReady = false;
 
 async function ensureSchema(sql) {
   if (schemaReady) return;
+  await sql.query(`CREATE TABLE IF NOT EXISTS printer_sales (
+    id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    item_name text NOT NULL, quantity integer NOT NULL CHECK(quantity>0),
+    unit_price numeric NOT NULL CHECK(unit_price>=0), counter bigint CHECK(counter>=0),
+    customer_phone text NOT NULL, customer_name text,
+    sold_at timestamptz NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
+    request_id uuid UNIQUE NOT NULL)`);
   await sql.query(`
     ALTER TABLE components
     ADD COLUMN IF NOT EXISTS minimum_stock_qty integer
@@ -147,6 +156,10 @@ module.exports = async function handler(req, res) {
 
   try {
     const sql = neon(process.env.DATABASE_URL);
+    await ensureAuth(sql);
+    if (!(await currentUser(sql, req))) return res.status(401).json({error:'Authentication required'});
+    if (req.headers.origin && req.headers.host && new URL(req.headers.origin).host !== req.headers.host) return res.status(403).json({error:'Invalid origin'});
+    res.setHeader('Cache-Control','no-store');
     await ensureSchema(sql);
     const body = req.body || {};
     const table = tableName(body.table);
@@ -172,10 +185,19 @@ module.exports = async function handler(req, res) {
       }
     } else if (body.action === "insert") {
       const payload = body.payload || {};
+      if (body.table === 'printer_sales') {
+        if (!String(payload.item_name || '').trim() || !String(payload.customer_phone || '').trim()) throw new Error('الصنف وهاتف العميل مطلوبان');
+        if (!Number.isSafeInteger(Number(payload.quantity)) || Number(payload.quantity) <= 0) throw new Error('العدد غير صالح');
+        if (payload.unit_price === '' || !Number.isFinite(Number(payload.unit_price)) || Number(payload.unit_price)<0) throw new Error('السعر غير صالح');
+        if (payload.counter != null && (!Number.isSafeInteger(Number(payload.counter)) || Number(payload.counter)<0)) throw new Error('العداد غير صالح');
+        if (!payload.sold_at || !Number.isFinite(Date.parse(payload.sold_at))) throw new Error('التاريخ غير صالح');
+        if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.request_id || '')) throw new Error('Invalid invoice request');
+      }
       const columns = Object.keys(payload);
       if (!columns.length) throw new Error("Insert payload is empty");
       params.push(...columns.map((column) => payload[column]));
       statement = `INSERT INTO ${table} (${columns.map((column) => identifier(column, "column")).join(", ")}) VALUES (${params.map((_, index) => `$${index + 1}`).join(", ")}) RETURNING *`;
+      if (body.table === 'printer_sales') statement = statement.replace(' RETURNING *', ' ON CONFLICT(request_id) DO UPDATE SET request_id=EXCLUDED.request_id RETURNING *');
     } else if (body.action === "update") {
       const payload = body.payload || {};
       const columns = Object.keys(payload);

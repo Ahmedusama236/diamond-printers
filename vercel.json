@@ -1,5 +1,8 @@
 {
   "framework": "vite",
   "buildCommand": "npm --prefix client install && npm --prefix client run build",
-  "outputDirectory": "client/dist"
+  "outputDirectory": "client/dist",
+  "rewrites": [
+    {"source":"/((?!api/|assets/|.*\\.[^/]+$).*)", "destination":"/index.html"}
+  ]
 }

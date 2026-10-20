@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, buildQuery } from "./api";
 import { t as tr } from "./i18n";
+import { navigate, paths, tabForLocation, useLocation, useStage } from './navigation';
+import { Dashboard, PrintersPage, AccountsPage } from './NewPages';
 
 const TABS = [
+  'dashboard',
+  'printers',
   "suppliers",
   "components",
   "purchases",
@@ -90,7 +94,7 @@ function blankPurchaseEdit() {
 }
 
 function blankLoginForm() {
-  return { username: "ahmed", password: "123456789" };
+  return { username: "", password: "" };
 }
 
 function toLocalDateTimeValue(isoString) {
@@ -116,7 +120,10 @@ function nowLocalDateValue() {
 
 function App() {
   const [language, setLanguage] = useState("en");
-  const [activeTab, setActiveTab] = useState("components");
+  const location = useLocation();
+  const activeTab = tabForLocation(location);
+  const setActiveTab = (tab) => navigate(paths[tab] || '/dashboard');
+  const [currentUser,setCurrentUser] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [info, setInfo] = useState("");
@@ -281,6 +288,9 @@ function App() {
       const payload = await api.get("/auth/status");
       const authenticated = Boolean(payload.authenticated);
       setIsAuthenticated(authenticated);
+      setCurrentUser(payload.user || null);
+      if (authenticated && ['/', '/login'].includes(window.location.pathname)) navigate('/dashboard');
+      if (!authenticated && window.location.pathname !== '/login') navigate('/login');
       setAuthChecked(true);
       setLoginError("");
       if (authenticated) {
@@ -381,11 +391,15 @@ function App() {
     setLoginError("");
     setError("");
     try {
-      await api.post("/auth/login", loginForm);
+      const result = await api.post("/auth/login", loginForm);
+      setCurrentUser(result.user);
       setIsAuthenticated(true);
+      navigate('/dashboard');
       await initialize();
     } catch (err) {
       setIsAuthenticated(false);
+      setCurrentUser(null);
+      navigate('/login');
       setLoginError(err.message);
     } finally {
       setAuthChecked(true);
@@ -397,6 +411,8 @@ function App() {
     await run(async () => {
       await api.post("/auth/logout");
       setIsAuthenticated(false);
+      setCurrentUser(null);
+      navigate('/login');
       setLoginForm(blankLoginForm());
       clearForms();
       setReportData(null);
@@ -482,7 +498,7 @@ function App() {
     <div className="app">
       <header className="topbar">
         <div className="brandHeader">
-          <img src="./diamond-logo.png" alt="Diamond for Printer Solutions" className="siteLogo" />
+          <img src="/diamond-logo.png" alt="Diamond for Printer Solutions" className="siteLogo" />
           <div>
           <h1>{t("appTitle")}</h1>
           <p className="subtitle">EGP | Africa/Cairo</p>
@@ -514,17 +530,18 @@ function App() {
 
       <nav className="tabs">
         {TABS.map((tab) => (
-          <button
+          <a
             key={tab}
+            href={paths[tab]}
             className={
               activeTab === tab || (tab === "components" && activeTab === "inventory")
                 ? "tab active"
                 : "tab"
             }
-            onClick={() => setActiveTab(tab)}
+            onClick={(event) => {if (!event.ctrlKey && !event.metaKey) {event.preventDefault();setActiveTab(tab);}}}
           >
             {t(tab)}
-          </button>
+          </a>
         ))}
       </nav>
 
@@ -533,6 +550,8 @@ function App() {
       {info && <div className="info">{info}</div>}
 
       <main>
+        {activeTab === 'dashboard' && <Dashboard api={api} />}
+        {activeTab === 'printers' && <PrintersPage api={api} Modal={Modal} />}
         {activeTab === "suppliers" && (
           <section>
             <SectionHeader
@@ -1255,6 +1274,11 @@ function App() {
         {activeTab === "settings" && (
           <section>
             <h2>{t("settings")}</h2>
+            <div className="subTabs">
+              <button onClick={()=>navigate('/settings')}>{t('lang')}</button>
+              <button onClick={()=>navigate('/settings/accounts')}>إدارة الحسابات</button>
+            </div>
+            {location.startsWith('/settings/accounts') && <AccountsPage api={api} Modal={Modal} user={currentUser} />}
             <div className="gridForm">
               <button
                 onClick={() =>
@@ -1577,7 +1601,7 @@ function ProductsBomTab({
 }
 
 function ManufacturingTab({ t, products, form, setForm, records, run, api, refreshAll }) {
-  const [activeStage, setActiveStage] = useState("order");
+  const [activeStage, setActiveStage] = useStage({order:'/manufacturing/orders',in_progress:'/manufacturing/in-progress',completed:'/manufacturing/completed'},'order');
   const [showForm, setShowForm] = useState(false);
   const stageRecords = records.filter((record) => (record.status || "completed") === activeStage);
 
@@ -1716,6 +1740,8 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
 
 function SalesTab({ t, products, form, setForm, records, run, api, refreshAll }) {
   const [showForm, setShowForm] = useState(false);
+  const location=useLocation();
+  const unpaidOnly=new URLSearchParams(location.split('?')[1] || '').get('payment')==='unpaid';
   return (
     <section className="salesSection">
       <SectionHeader
@@ -1726,6 +1752,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           setShowForm(true);
         }}
       />
+      {unpaidOnly && <div className="filterBar"><span>حساب التصنيع غير المدفوع</span><button onClick={()=>navigate('/sales')}>عرض كل المبيعات</button></div>}
       {(showForm || form.id) && <Modal
         title={`${form.id ? t("edit") : t("create")} ${t("sales")}`}
         onClose={() => {
@@ -1806,7 +1833,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           t("manufacturingPaid"),
           t("actions"),
         ]}
-        rows={records}
+        rows={unpaidOnly ? records.filter(row=>!row.is_accounted) : records}
         emptyText={t("noData")}
         renderRow={(r) => (
           <>
@@ -1871,7 +1898,7 @@ function MaintenanceInvoice({ ticket, t }) {
   return (
     <article className="maintenanceInvoice" dir="rtl">
       <header className="invoiceHeader">
-        <img src="./diamond-logo.png" alt="Diamond for Printer Solutions" />
+        <img src="/diamond-logo.png" alt="Diamond for Printer Solutions" />
         <h2>{t("maintenanceInvoice")}</h2>
         <div>#{ticket.id} — {new Date(invoiceDate).toLocaleDateString("ar-EG")}</div>
       </header>
@@ -1892,7 +1919,7 @@ function InvoiceRow({ label, value }) {
 }
 
 function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
-  const [activeStage, setActiveStage] = useState("request");
+  const [activeStage, setActiveStage] = useStage({request:'/maintenance/request',in_progress:'/maintenance/in-progress',completed:'/maintenance/completed'},'request');
   const [showRequest, setShowRequest] = useState(false);
   const [requestForm, setRequestForm] = useState(blankMaintenanceTicket());
   const [selectedTicketId, setSelectedTicketId] = useState(null);

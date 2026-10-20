@@ -31,6 +31,13 @@ a {
   padding: 16px;
 }
 
+.dashboardGrid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 16px; margin-top: 18px; }
+.dashboardGrid article { border: 1px solid var(--line); border-radius: 14px; padding: 20px; background: linear-gradient(145deg,#f0faf8,#fff); }
+.dashboardGrid article > a { display: block; font-size: 1.1rem; font-weight: 700; margin-bottom: 18px; }
+.dashboardGrid article p { line-height: 1.8; }
+.gridForm label { display: flex; flex-direction: column; gap: 7px; }
+.gridForm label:has(input[type=checkbox]) { flex-direction: row; align-items: center; }
+
 .loginShell {
   min-height: 100vh;
   display: grid;
@@ -106,6 +113,8 @@ a {
 }
 
 .tab {
+  display: inline-block;
+  text-decoration: none;
   border: 1px solid var(--line);
   border-radius: 100px;
   background: var(--card);

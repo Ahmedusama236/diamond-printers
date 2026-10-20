@@ -3,9 +3,17 @@ import { DateTime } from "luxon";
 const DATA_API_URL = import.meta.env.VITE_DATA_API_URL || "/api/data";
 
 const CAIRO_TZ = "Africa/Cairo";
-const AUTH_USERNAME = "ahmed";
-const AUTH_PASSWORD = "123456789";
 const AUTH_STORAGE_KEY = "diamond_printers_auth";
+
+async function authRequest(action, body = {}) {
+  const response = await fetch('/api/auth', {
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({...body,action}),
+  });
+  const result = await response.json();
+  if (!response.ok) throw withStatus(response.status,result.error || 'Authentication failed');
+  return result;
+}
 
 function nowIso() {
   return new Date().toISOString();
@@ -145,7 +153,7 @@ async function databaseRequest(payload) {
     body: JSON.stringify(payload),
   });
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || "Database request failed");
+  if (!response.ok) throw withStatus(response.status, result.error || "Database request failed");
   return result.data || [];
 }
 
@@ -710,7 +718,9 @@ async function getMaintenanceTickets() {
 
 async function handleGet(pathname, query) {
   if (pathname === "/auth/status") {
-    return { authenticated: getAuthState(), username: getAuthState() ? AUTH_USERNAME : undefined };
+    const result = await authRequest('status');
+    setAuthState(result.authenticated);
+    return result;
   }
   if (pathname === "/settings/language") {
     const row = await selectSingle("settings", { eq: [["key", "language"]] });
@@ -753,6 +763,8 @@ async function handleGet(pathname, query) {
     const productMap = new Map(products.map((row) => [row.id, row]));
     return rows.map((row) => ({ ...row, product_name: productMap.get(row.product_id)?.name || "" }));
   }
+  if (pathname === '/printer-sales') return selectRows('printer_sales',{order:[['sold_at',false]]});
+  if (pathname === '/accounts') return (await authRequest('list')).users;
   if (pathname === "/damage-records") {
     const [rows, components] = await Promise.all([
       selectRows("damage_records", { order: [["damaged_at", false]] }),
@@ -811,15 +823,25 @@ async function handleGet(pathname, query) {
 
 async function handlePost(pathname, body) {
   if (pathname === "/auth/login") {
-    const username = String(body.username || "").trim();
-    const password = String(body.password || "");
-    if (username !== AUTH_USERNAME || password !== AUTH_PASSWORD) throw new Error("Invalid username or password");
+    const result = await authRequest('login',body);
     setAuthState(true);
-    return { success: true, username: AUTH_USERNAME };
+    return result;
   }
   if (pathname === "/auth/logout") {
+    await authRequest('logout');
     setAuthState(false);
     return { success: true };
+  }
+  if (pathname === '/accounts') return authRequest('create',body);
+  if (pathname === '/printer-sales') {
+    return insertRow('printer_sales', {
+      item_name:requireName(body.item_name),quantity:toPositiveInt(body.quantity,'quantity'),
+      unit_price:toNonNegativeNumber(body.unit_price,'unit_price'),
+      counter:body.counter === '' || body.counter == null ? null : toNonNegativeInt(body.counter,'counter'),
+      customer_phone:requireName(body.customer_phone,'customer_phone'),
+      customer_name:body.customer_name ? String(body.customer_name).trim() : null,
+      sold_at:toUtcIsoFromInput(body.sold_at,'sold_at'),request_id:body.request_id,
+    });
   }
   if (pathname === "/suppliers") {
     const now = nowIso();
@@ -1042,6 +1064,7 @@ async function handlePost(pathname, body) {
 }
 
 async function handlePut(pathname, body) {
+  if (pathname.startsWith('/accounts/')) return authRequest('update',{...body,id:pathname.split('/')[2]});
   if (pathname === "/settings/language") {
     const language = String(body.language || "").trim();
     if (!["en", "ar"].includes(language)) throw new Error("language must be 'en' or 'ar'");
