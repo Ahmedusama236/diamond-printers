@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="850" viewBox="0 0 1000 850">
+  <rect width="1000" height="850" fill="white"/>
+  <g fill="#111" font-family="Arial, sans-serif">
+    <text x="65" y="95" font-size="49" font-weight="700">Printer Status Report</text>
+    <text x="65" y="180" font-size="37" font-weight="700">Product Information</text>
+    <g font-size="31">
+      <text x="65" y="245">1. Model Name: HP Smart Tank 580-590 series</text>
+      <text x="65" y="305">2. Model Number: 585</text>
+      <text x="65" y="365">3. Serial Number: CN53RBC1HM</text>
+      <text x="65" y="425">4. Product Number: 1F3Y4A</text>
+      <text x="65" y="485">5. Service ID: 12345</text>
+      <text x="65" y="545">6. Printer Zone (PX): 0</text>
+      <text x="65" y="605">7. Firmware Version: LWP1CN2446AR</text>
+      <text x="65" y="665">8. Country/Region: 57 / 1</text>
+      <text x="65" y="725">9. Printer PIN: 12345678</text>
+      <text x="65" y="785">10. Total Pages Printed: 21</text>
+    </g>
+  </g>
+</svg>

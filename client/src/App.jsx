@@ -2484,11 +2484,15 @@ function Modal({ title, onClose, wide = false, children }) {
       if(event.key==='Tab'){
         const focusable=Array.from(card.current?.querySelectorAll('button:not(:disabled),a[href],input:not(:disabled),select:not(:disabled),textarea:not(:disabled),[tabindex="0"]')||[]).filter(el=>el.getClientRects().length);
         const first=focusable[0],last=focusable[focusable.length-1];
+        if(!focusable.includes(document.activeElement)){event.preventDefault();first?.focus();return;}
         if(event.shiftKey&&document.activeElement===first){event.preventDefault();last?.focus();}
         else if(!event.shiftKey&&document.activeElement===last){event.preventDefault();first?.focus();}
       }
     };
-    const timer=setTimeout(()=>(card.current?.querySelector('input,select,textarea')||card.current?.querySelector('button'))?.focus(),0);
+    const timer=setTimeout(()=>{
+      const field=Array.from(card.current?.querySelectorAll('input,select,textarea')||[]).find(element=>!element.disabled&&element.getClientRects().length);
+      (field||card.current?.querySelector('button'))?.focus();
+    },0);
     document.addEventListener("keydown", handleKeyDown);
     return () => {
       clearTimeout(timer);previousFocus?.focus?.();
@@ -2502,6 +2506,7 @@ function Modal({ title, onClose, wide = false, children }) {
       <div
         ref={card}
         onChangeCapture={event=>{if(event.target.closest('form'))dirty.current=true;}}
+        onClickCapture={event=>{if(event.target.closest('[data-form-action]'))dirty.current=true;}}
         className={`modalCard${wide ? " modalCardWide" : ""}`}
         role="dialog"
         aria-modal="true"

@@ -113,6 +113,28 @@ test('editing an invoice preserves its original Cairo timestamp and creates inde
  assert.equal(editPrinterInvoice({...row,serial_number:'00HP-001',counter:0}).counter,0);
 });
 
+test('serial recognition prefers the serial label, supports line breaks and avoids model, product and PIN',()=>{
+ const {extractSerialCandidates}=loadClientModule('serialRecognition.js');
+ const report='Model Name: HP Smart Tank 580-590 series\nModel Number: 585\n3. Serial Number: CN53RBC1HM\nProduct Number: 1F3Y4A\nFirmware Version: LWP1CN2446AR\nPrinter PIN: 12345678';
+ assert.deepEqual(extractSerialCandidates(report),['CN53RBC1HM']);
+ assert.deepEqual(extractSerialCandidates('Serial Number:\nCN53RBC1HM'),['CN53RBC1HM']);
+ assert.deepEqual(extractSerialCandidates('Serial Nurnber: CN53 RBC1HM'),['CN53RBC1HM']);
+ assert.deepEqual(extractSerialCandidates('S/N: AB-0012345'),['AB-0012345']);
+ assert.deepEqual(extractSerialCandidates('Product Number: 1F3Y4A\nFirmware Version: LWP1CN2446AR\nPrinter PIN: 12345678'),[]);
+ assert.deepEqual(extractSerialCandidates('Serial Number:\n4. Product Number: 1F3Y4A'),[]);
+ assert.deepEqual(extractSerialCandidates('Printer PIN: 12345678'),[]);
+ assert.deepEqual(extractSerialCandidates('CN53RBC1HM'),['CN53RBC1HM']);
+ assert.deepEqual(extractSerialCandidates(''),[]);
+});
+
+test('camera cleanup stops all tracks and permission errors offer image upload',()=>{
+ const {stopCamera,cameraErrorMessage}=loadClientModule('serialRecognition.js');let stopped=0;
+ stopCamera({getTracks:()=>[{stop(){stopped++;}},{stop(){stopped++;}}]});assert.equal(stopped,2);stopCamera(null);
+ assert.match(cameraErrorMessage({name:'NotAllowedError'}),/اختر صورة/);
+ assert.match(cameraErrorMessage({name:'NotFoundError'}),/صورة/);
+ assert.match(cameraErrorMessage({name:'NotReadableError'}),/تطبيق آخر/);
+});
+
 test('routes preserve manufacturing, maintenance, printer and settings subsections',()=>{
   const {tabForLocation}=loadClientModule('navigation.js');
   assert.equal(tabForLocation('/manufacturing/completed'),'manufacturing');

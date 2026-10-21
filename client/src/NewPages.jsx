@@ -2,6 +2,7 @@ import {useEffect,useState,useRef} from 'react';
 import {DateTime} from 'luxon';
 import {navigate,useLocation} from './navigation';
 import {newPrinterInvoice,newPrinterExtra,editPrinterInvoice,printerInvoiceTotal,filterPrinterSales} from './printerInvoices';
+import {SerialScannerButton} from './SerialScanner';
 const zone='Africa/Cairo';
 const money=value=>Number(value || 0).toLocaleString('ar-EG',{maximumFractionDigits:2});
 
@@ -82,7 +83,7 @@ export function PrintersPage({api,Modal,DataTable}) {
         <label>العدد<input type="number" min="1" step="1" placeholder="1" value={form.quantity} onChange={e=>change('quantity',e.target.value)} onBlur={()=>{if(form.quantity==='')change('quantity',1);}}/></label>
         <label>سعر الوحدة<input type="number" required min="0" step="0.01" value={form.unit_price} onChange={e=>change('unit_price',e.target.value)}/></label>
         <label>العداد (اختياري)<input type="number" min="0" step="1" value={form.counter} onChange={e=>change('counter',e.target.value)}/></label>
-        <label>السريل نامبر (اختياري)<input type="text" dir="ltr" value={form.serial_number} onChange={e=>change('serial_number',e.target.value)}/></label>
+        <div className="serialNumberField"><label htmlFor="printer-serial-number">السريل نامبر (اختياري)</label><div className="serialNumberInput"><input id="printer-serial-number" type="text" dir="ltr" value={form.serial_number} onChange={e=>change('serial_number',e.target.value)}/><SerialScannerButton Modal={Modal} disabled={saving} onDetected={value=>change('serial_number',value)}/></div></div>
         <fieldset className="printerExtras" disabled={saving}>
           <div className="printerExtrasHeader"><div><h4>أصناف مع الطابعة</h4><p>ورق، حبر، كابل أو أي صنف اشتراه العميل</p></div><button type="button" disabled={saving||form.extra_items.length>=50} onClick={()=>setForm(s=>({...s,extra_items:[...s.extra_items,newPrinterExtra()]}))}>＋ إضافة صنف</button></div>
           {form.extra_items.map((item,index)=><article className="printerExtraLine" key={item._key}>

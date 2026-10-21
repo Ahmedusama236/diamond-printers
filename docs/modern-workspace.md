@@ -24,6 +24,27 @@ instead of replacing it with the current time.
 Printer counters and optional serial numbers are visible in the sales list.
 Migration 012 adds nullable `serial_number`; old invoices remain valid. The serial
 is stored as text, supports search and edits, and preserves leading zeros.
+The serial field includes camera and image buttons. The camera prefers the rear
+camera, captures only after the user presses Capture, and stops tracks on capture,
+image selection and close (including late permission responses). OCR runs in a
+browser worker with self-hosted Tesseract.js 7 WASM and English language assets;
+photos are not sent to a server or stored in an invoice. The parser prioritizes
+Serial Number / S/N labels and never auto-corrects ambiguous O/0 or I/1. Users
+review/edit the recognized value and explicitly confirm it. Permission denial or
+missing cameras have an image/manual fallback. A real device camera still needs
+user permission and has not been exercised by automation.
+
+Build scripts copy OCR assets to `client/dist/ocr`; `npm run dev` also prepares
+ignored `client/public/ocr`. Official API: https://github.com/naptha/tesseract.js/blob/master/docs/api.md.
+
+OCR QA: render `/fixtures/serial-report.svg` using the local preview and save a PNG
+as `artifacts/serial-report-test.png`. Run `node scripts/check-serial-ocr.cjs` for
+actual OCR. For browser QA, build `node scripts/build-serial-browser-test.cjs`,
+start the preview and open `/ocr-check`. This local-only harness supplies the
+synthetic image without activating hardware or uploading production documents.
+Both real-engine checks recognized CN53RBC1HM from a report containing other
+model, product, firmware and PIN numbers. The uploaded reference photo itself
+was not available as a local test file.
 
 - Grouped sidebar with collapse/search on desktop; drawer and bottom navigation
   on mobile. Existing routes remain valid. Original logo is retained.

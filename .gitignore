@@ -3,6 +3,7 @@ server/node_modules/
 client/node_modules/
 server/data/
 client/dist/
+client/public/ocr/
 release/
 *.log
 .env
