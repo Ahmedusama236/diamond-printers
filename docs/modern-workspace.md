@@ -21,6 +21,9 @@ Saved invoices have an Edit action. PUT `/printer-sales/:id` validates the same
 fields as creation, replaces quantities and accessories, and keeps the invoice
 ID, creation time and original request ID. The form loads the saved Cairo date
 instead of replacing it with the current time.
+Printer counters and optional serial numbers are visible in the sales list.
+Migration 012 adds nullable `serial_number`; old invoices remain valid. The serial
+is stored as text, supports search and edits, and preserves leading zeros.
 
 - Grouped sidebar with collapse/search on desktop; drawer and bottom navigation
   on mobile. Existing routes remain valid. Original logo is retained.

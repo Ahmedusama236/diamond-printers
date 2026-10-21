@@ -83,6 +83,7 @@ test('new invoices initialize optional fields blank, current Cairo seconds and u
   const {DateTime}=require('../client/node_modules/luxon');
   const invoice=newPrinterInvoice();
   assert.equal(invoice.customer_name,'');assert.equal(invoice.counter,'');assert.equal(invoice.quantity,1);
+  assert.equal(invoice.serial_number,'');
   assert.match(invoice.sold_at,/T\d{2}:\d{2}:\d{2}$/);
   assert.ok(Math.abs(DateTime.fromISO(invoice.sold_at,{zone:'Africa/Cairo'}).toMillis()-Date.now())<2000);
   assert.notEqual(invoice.request_id,newPrinterInvoice().request_id);
@@ -97,6 +98,7 @@ test('invoice extras calculate totals, remain searchable and preserve legacy inv
  assert.equal(printerInvoiceTotal({quantity:2,unit_price:100}),200);
  assert.equal(printerInvoiceTotal({quantity:3,unit_price:0.1,extra_items:[{quantity:1,unit_price:0.2}]}),0.5);
  assert.equal(filterPrinterSales([invoice],{q:'paper'}).length,1);
+ assert.equal(filterPrinterSales([{...invoice,serial_number:'00HP-001'}],{q:'00hp-001'}).length,1);
 });
 
 test('editing an invoice preserves its original Cairo timestamp and creates independent accessory drafts',()=>{
@@ -107,6 +109,8 @@ test('editing an invoice preserves its original Cairo timestamp and creates inde
  assert.notEqual(draft.extra_items[0]._key,editPrinterInvoice(row).extra_items[0]._key);
  draft.extra_items[0].quantity=5;assert.equal(row.extra_items[0].quantity,1);
  assert.deepEqual(editPrinterInvoice({...row,extra_items:undefined}).extra_items,[]);
+ assert.equal(editPrinterInvoice({...row,serial_number:'00HP-001',counter:0}).serial_number,'00HP-001');
+ assert.equal(editPrinterInvoice({...row,serial_number:'00HP-001',counter:0}).counter,0);
 });
 
 test('routes preserve manufacturing, maintenance, printer and settings subsections',()=>{

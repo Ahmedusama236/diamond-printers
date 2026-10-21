@@ -110,6 +110,9 @@ async function ensureSchema(database) {
   await runMigration(database,'printer_invoice_extras_v1',[
     `ALTER TABLE public.printer_sales ADD COLUMN IF NOT EXISTS extra_items jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(extra_items) = 'array')`,
   ]);
+  await runMigration(database,'printer_serial_number_v1',[
+    'ALTER TABLE public.printer_sales ADD COLUMN IF NOT EXISTS serial_number text',
+  ]);
   schemaReady = true;
 }
 

@@ -91,6 +91,7 @@ function printerInvoicePayload(body,current={}) {
     item_name:requireName(values.item_name),quantity:toPositiveInt(values.quantity === '' || values.quantity == null?1:values.quantity,'quantity'),
     unit_price:toNonNegativeNumber(values.unit_price,'unit_price'),extra_items:extraItems,
     counter:values.counter === '' || values.counter == null?null:toNonNegativeInt(values.counter,'counter'),
+    serial_number:values.serial_number == null?null:String(values.serial_number).trim()||null,
     customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,
     customer_name:values.customer_name?String(values.customer_name).trim()||null:null,
     sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),

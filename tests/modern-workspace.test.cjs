@@ -12,6 +12,7 @@ test('printer invoice keeps blank phone optional, defaults quantity to one and r
  const body={item_name:'Printer',quantity:'',unit_price:5500,customer_phone:'',counter:'',sold_at:'2026-10-21T12:00',request_id:id};
  const result=await service.request('/printer-sales',{method:'POST',body:JSON.stringify(body)});
  assert.equal(result.quantity,1);assert.equal(result.customer_phone,null);assert.equal(result.counter,null);assert.equal(writes[0].table,'printer_sales');
+ assert.equal(result.serial_number,null);
  await assert.rejects(service.request('/printer-sales',{method:'POST',body:JSON.stringify({...body,quantity:1.5})}),/integer/);
 });
 
@@ -44,6 +45,22 @@ test('editing a printer invoice updates the existing row and replaces accessorie
  assert.equal(writes.length,2);
  await assert.rejects(service.request('/printer-sales/999',{method:'PUT',body:'{}'}),error=>error.status===404);
  assert.equal(writes.length,2);
+});
+
+test('printer serial is optional, preserves leading zeros, survives partial edits and can be cleared',async()=>{
+ let invoice;
+ const service=createBusiness(async input=>{
+  if(input.action==='select')return invoice?[{...invoice}]:[];
+  if(input.action==='insert')invoice={id:3,...input.payload};
+  else Object.assign(invoice,input.payload);
+  return [{...invoice}];
+ });
+ await service.request('/printer-sales',{method:'POST',body:JSON.stringify({item_name:'HP',quantity:1,unit_price:4500,counter:0,serial_number:'  00HP-001  ',request_id:id})});
+ assert.equal(invoice.serial_number,'00HP-001');assert.equal(invoice.counter,0);
+ await service.request('/printer-sales/3',{method:'PUT',body:JSON.stringify({unit_price:4600})});
+ assert.equal(invoice.serial_number,'00HP-001');assert.equal(invoice.counter,0);
+ await service.request('/printer-sales/3',{method:'PUT',body:JSON.stringify({serial_number:'   ',counter:''})});
+ assert.equal(invoice.serial_number,null);assert.equal(invoice.counter,null);
 });
 
 test('stock adjustment replaces quantity and empty minimum remains automatic',async()=>{
