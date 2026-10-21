@@ -17,6 +17,10 @@ Each accessory stores name, quantity and unit price. Invoice totals, printer
 revenue and search include these items; the printer count remains the main line's
 quantity. Existing invoices default to an empty list. Migration 011 is applied
 automatically; accessories are free-text sales and do not adjust component stock.
+Saved invoices have an Edit action. PUT `/printer-sales/:id` validates the same
+fields as creation, replaces quantities and accessories, and keeps the invoice
+ID, creation time and original request ID. The form loads the saved Cairo date
+instead of replacing it with the current time.
 
 - Grouped sidebar with collapse/search on desktop; drawer and bottom navigation
   on mobile. Existing routes remain valid. Original logo is retained.

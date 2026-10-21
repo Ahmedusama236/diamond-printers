@@ -6,6 +6,14 @@ export function newPrinterInvoice() {
 export function newPrinterExtra() {
   return {_key:crypto.randomUUID(),item_name:'',quantity:1,unit_price:''};
 }
+export function editPrinterInvoice(invoice) {
+  return {
+    id:invoice.id,item_name:invoice.item_name,quantity:invoice.quantity,unit_price:invoice.unit_price,
+    counter:invoice.counter??'',customer_phone:invoice.customer_phone??'',customer_name:invoice.customer_name??'',
+    sold_at:DateTime.fromISO(invoice.sold_at).setZone('Africa/Cairo').toFormat("yyyy-MM-dd'T'HH:mm:ss"),
+    extra_items:(invoice.extra_items||[]).map(item=>({...item,_key:crypto.randomUUID()})),
+  };
+}
 export function printerInvoiceTotal(invoice) {
   const lineTotal=item=>Math.round(Number(item.quantity === '' || item.quantity == null ? 1:item.quantity)*Number(item.unit_price||0)*100)/100;
   return Math.round((lineTotal(invoice)+(Array.isArray(invoice.extra_items)?invoice.extra_items:[]).reduce((sum,item)=>sum+lineTotal(item),0))*100)/100;

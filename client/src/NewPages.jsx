@@ -1,7 +1,7 @@
 import {useEffect,useState,useRef} from 'react';
 import {DateTime} from 'luxon';
 import {navigate,useLocation} from './navigation';
-import {newPrinterInvoice,newPrinterExtra,printerInvoiceTotal,filterPrinterSales} from './printerInvoices';
+import {newPrinterInvoice,newPrinterExtra,editPrinterInvoice,printerInvoiceTotal,filterPrinterSales} from './printerInvoices';
 const zone='Africa/Cairo';
 const money=value=>Number(value || 0).toLocaleString('ar-EG',{maximumFractionDigits:2});
 
@@ -70,11 +70,11 @@ export function PrintersPage({api,Modal,DataTable}) {
         <label>إلى <input type="date" value={filters.to} onChange={e=>setFilters(s=>({...s,to:e.target.value}))}/></label>
         <input placeholder="بحث بالصنف أو العميل أو رقم الفاتورة" value={filters.q} onChange={e=>setFilters(s=>({...s,q:e.target.value}))}/></div>
       <p>{filtered.length} فاتورة — {filtered.reduce((s,r)=>s+Number(r.quantity),0)} طابعة — إجمالي {money(filtered.reduce((s,r)=>s+printerInvoiceTotal(r),0))} جنيه</p>
-      <DataTable searchable={false} columns={['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','إجمالي الفاتورة','العداد','العميل','الهاتف','الأصناف الإضافية']} rows={filtered} secondaryColumns={[6,8,9]} emptyText="لا توجد فواتير" renderRow={r=><><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}{r.extra_items?.length>0&&<small className="printerExtraHint">+ {r.extra_items.length} صنف إضافي</small>}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(printerInvoiceTotal(r))}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td><td>{r.extra_items?.length?<ul className="printerExtraList">{r.extra_items.map((item,i)=><li key={i}><strong>{item.item_name}</strong><span>{item.quantity} × {money(item.unit_price)} جنيه = {money(item.quantity*item.unit_price)} جنيه</span></li>)}</ul>:'—'}</td></>}/></>}
-    {form&&<Modal title="فاتورة بيع طابعات" onClose={()=>{if(!saving)setForm(null);}}>
+      <DataTable searchable={false} columns={['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','إجمالي الفاتورة','العداد','العميل','الهاتف','الأصناف الإضافية','إجراءات']} rows={filtered} secondaryColumns={[6,8,9]} emptyText="لا توجد فواتير" renderRow={r=><><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}{r.extra_items?.length>0&&<small className="printerExtraHint">+ {r.extra_items.length} صنف إضافي</small>}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(printerInvoiceTotal(r))}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td><td>{r.extra_items?.length?<ul className="printerExtraList">{r.extra_items.map((item,i)=><li key={i}><strong>{item.item_name}</strong><span>{item.quantity} × {money(item.unit_price)} جنيه = {money(item.quantity*item.unit_price)} جنيه</span></li>)}</ul>:'—'}</td><td><button type="button" onClick={()=>{setError('');setForm(editPrinterInvoice(r));}}>تعديل</button></td></>}/></>}
+    {form&&<Modal title={form.id?`تعديل فاتورة #${form.id}`:'فاتورة بيع طابعات'} onClose={()=>{if(!saving)setForm(null);}}>
       <form className="gridForm" onSubmit={async e=>{
         e.preventDefault();if(lock.current)return;lock.current=true;setSaving(true);setError('');
-        try{await api.post('/printer-sales',form);setForm(null);await load();navigate('/printers/sales');}
+        try{if(form.id)await api.put(`/printer-sales/${form.id}`,form);else await api.post('/printer-sales',form);setForm(null);await load();navigate('/printers/sales');}
         catch(err){setError(err.message);}finally{lock.current=false;setSaving(false);}
       }}>
         {error&&<div className="error">{error}</div>}
@@ -94,7 +94,7 @@ export function PrintersPage({api,Modal,DataTable}) {
         <label>اسم العميل (اختياري)<input value={form.customer_name} onChange={e=>change('customer_name',e.target.value)}/></label>
         <label>التاريخ والوقت — القاهرة<input type="datetime-local" required step="1" value={form.sold_at} onChange={e=>change('sold_at',e.target.value)}/></label>
         <div className="printerInvoiceTotal"><span>إجمالي الفاتورة</span><strong>{money(printerInvoiceTotal(form))} جنيه</strong></div>
-        <button disabled={saving} className="primaryButton printerInvoiceSave">{saving?'جارٍ الحفظ…':'حفظ'}</button>
+        <button disabled={saving} className="primaryButton printerInvoiceSave">{saving?'جارٍ الحفظ…':form.id?'حفظ التعديلات':'حفظ'}</button>
       </form></Modal>}
   </section>;
 }

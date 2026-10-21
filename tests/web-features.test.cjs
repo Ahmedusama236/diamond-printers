@@ -99,6 +99,16 @@ test('invoice extras calculate totals, remain searchable and preserve legacy inv
  assert.equal(filterPrinterSales([invoice],{q:'paper'}).length,1);
 });
 
+test('editing an invoice preserves its original Cairo timestamp and creates independent accessory drafts',()=>{
+ const {editPrinterInvoice}=loadClientModule('printerInvoices.js');
+ const row={id:7,item_name:'Printer',quantity:2,unit_price:5000,counter:null,customer_phone:null,customer_name:null,sold_at:'2026-10-21T09:25:56Z',extra_items:[{item_name:'Paper',quantity:1,unit_price:150}]};
+ const draft=editPrinterInvoice(row);
+ assert.equal(draft.id,7);assert.equal(draft.sold_at,'2026-10-21T12:25:56');assert.equal(draft.quantity,2);assert.equal(draft.counter,'');assert.equal(draft.customer_phone,'');
+ assert.notEqual(draft.extra_items[0]._key,editPrinterInvoice(row).extra_items[0]._key);
+ draft.extra_items[0].quantity=5;assert.equal(row.extra_items[0].quantity,1);
+ assert.deepEqual(editPrinterInvoice({...row,extra_items:undefined}).extra_items,[]);
+});
+
 test('routes preserve manufacturing, maintenance, printer and settings subsections',()=>{
   const {tabForLocation}=loadClientModule('navigation.js');
   assert.equal(tabForLocation('/manufacturing/completed'),'manufacturing');

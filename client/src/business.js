@@ -77,6 +77,26 @@ function round2(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+function printerInvoicePayload(body,current={}) {
+  const values={...current,...body};
+  if(values.extra_items != null && (!Array.isArray(values.extra_items)||values.extra_items.length>50))throw new Error('يمكن إضافة حتى 50 صنفًا إضافيًا في الفاتورة');
+  const extraItems=(values.extra_items||[]).map((item,index)=>{
+    if(!item||typeof item!=='object')throw new Error('بيانات الصنف الإضافي غير صالحة');
+    const name=String(item.item_name||'').trim();
+    if(!name)throw new Error(`أدخل اسم الصنف الإضافي ${index+1} أو احذفه`);
+    if(item.unit_price===''||item.unit_price==null)throw new Error(`أدخل سعر الصنف الإضافي ${index+1}`);
+    return {item_name:name,quantity:toPositiveInt(item.quantity === '' || item.quantity == null?1:item.quantity,'quantity'),unit_price:toNonNegativeNumber(item.unit_price,'unit_price')};
+  });
+  return {
+    item_name:requireName(values.item_name),quantity:toPositiveInt(values.quantity === '' || values.quantity == null?1:values.quantity,'quantity'),
+    unit_price:toNonNegativeNumber(values.unit_price,'unit_price'),extra_items:extraItems,
+    counter:values.counter === '' || values.counter == null?null:toNonNegativeInt(values.counter,'counter'),
+    customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,
+    customer_name:values.customer_name?String(values.customer_name).trim()||null:null,
+    sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),
+  };
+}
+
 function toUtcIsoFromInput(input, fieldName) {
   if (!input) {
     return nowIso();
@@ -840,22 +860,8 @@ async function handlePost(pathname, body) {
   }
   if (pathname === '/accounts') return authRequest('create',body);
   if (pathname === '/printer-sales') {
-    if(body.extra_items != null && (!Array.isArray(body.extra_items)||body.extra_items.length>50))throw new Error('يمكن إضافة حتى 50 صنفًا إضافيًا في الفاتورة');
-    const extraItems=(body.extra_items||[]).map((item,index)=>{
-      if(!item||typeof item!=='object')throw new Error('بيانات الصنف الإضافي غير صالحة');
-      const name=String(item.item_name||'').trim();
-      if(!name)throw new Error(`أدخل اسم الصنف الإضافي ${index+1} أو احذفه`);
-      if(item.unit_price===''||item.unit_price==null)throw new Error(`أدخل سعر الصنف الإضافي ${index+1}`);
-      return {item_name:name,quantity:toPositiveInt(item.quantity === '' || item.quantity == null?1:item.quantity,'quantity'),unit_price:toNonNegativeNumber(item.unit_price,'unit_price')};
-    });
     return insertRow('printer_sales', {
-      extra_items:extraItems,
-      item_name:requireName(body.item_name),quantity:toPositiveInt(body.quantity === '' || body.quantity == null ? 1 : body.quantity,'quantity'),
-      unit_price:toNonNegativeNumber(body.unit_price,'unit_price'),
-      counter:body.counter === '' || body.counter == null ? null : toNonNegativeInt(body.counter,'counter'),
-      customer_phone:body.customer_phone ? String(body.customer_phone).trim() || null : null,
-      customer_name:body.customer_name ? String(body.customer_name).trim() : null,
-      sold_at:toUtcIsoFromInput(body.sold_at,'sold_at'),request_id:body.request_id,
+      ...printerInvoicePayload(body),request_id:body.request_id,
     });
   }
   if (pathname === "/suppliers") {
@@ -1079,6 +1085,12 @@ async function handlePost(pathname, body) {
 }
 
 async function handlePut(pathname, body) {
+  if (/^\/printer-sales\/\d+$/.test(pathname)) {
+    const invoiceId=toPositiveInt(pathname.split('/')[2],'invoice_id');
+    const current=await selectSingle('printer_sales',{eq:[['id',invoiceId]]});
+    if(!current)throw withStatus(404,'الفاتورة غير موجودة');
+    return (await updateRows('printer_sales',printerInvoicePayload(body,current),[['id',invoiceId]]))[0];
+  }
   if (pathname.startsWith('/accounts/')) return authRequest('update',{...body,id:pathname.split('/')[2]});
   if (pathname === "/settings/language") {
     const language = String(body.language || "").trim();

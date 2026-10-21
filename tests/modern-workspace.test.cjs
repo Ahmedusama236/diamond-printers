@@ -28,6 +28,24 @@ test('printer accessories save in the same invoice, strip UI keys and validate e
  }
 });
 
+test('editing a printer invoice updates the existing row and replaces accessories without duplicating it',async()=>{
+ const invoice={id:7,item_name:'Printer',quantity:1,unit_price:5500,counter:null,customer_name:null,customer_phone:null,sold_at:'2026-10-21T09:25:56.000Z',created_at:'2026-10-21T09:26:00.000Z',request_id:id,extra_items:[{item_name:'Paper',quantity:2,unit_price:150},{item_name:'Cable',quantity:1,unit_price:75}]};
+ const originalDate=invoice.sold_at,writes=[];
+ const service=createBusiness(async input=>{
+  if(input.action==='select')return input.eq[0][1]===7?[{...invoice}]:[];
+  writes.push(input);Object.assign(invoice,input.payload);return [{...invoice}];
+ });
+ const result=await service.request('/printer-sales/7',{method:'PUT',body:JSON.stringify({quantity:3,unit_price:5000,customer_phone:'',extra_items:[{_key:'draft',item_name:'Ink',quantity:2,unit_price:200}],request_id:'must-not-change'})});
+ assert.equal(result.id,7);assert.equal(result.quantity,3);assert.equal(result.unit_price,5000);assert.equal(result.customer_phone,null);assert.equal(result.request_id,id);assert.equal(result.sold_at,originalDate);
+ assert.deepEqual(result.extra_items,[{item_name:'Ink',quantity:2,unit_price:200}]);assert.equal(writes.length,1);assert.equal(writes[0].action,'update');assert.deepEqual(writes[0].eq,[['id',7]]);
+ await service.request('/printer-sales/7',{method:'PUT',body:JSON.stringify({extra_items:[]})});
+ assert.deepEqual(invoice.extra_items,[]);assert.equal(invoice.quantity,3);
+ await assert.rejects(service.request('/printer-sales/7',{method:'PUT',body:JSON.stringify({quantity:-1})}));
+ assert.equal(writes.length,2);
+ await assert.rejects(service.request('/printer-sales/999',{method:'PUT',body:'{}'}),error=>error.status===404);
+ assert.equal(writes.length,2);
+});
+
 test('stock adjustment replaces quantity and empty minimum remains automatic',async()=>{
  const component={id:1,item_name:'Sensor',stock_qty:10,minimum_stock_qty:4};const ledger=[];
  const service=createBusiness(async input=>{
