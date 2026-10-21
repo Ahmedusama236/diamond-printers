@@ -4,7 +4,7 @@ const {createBusiness}=require('../lib/business.cjs');
 const {executeOperation,adapter}=require('../lib/operations');
 const {transformSync}=require('../client/node_modules/esbuild');
 const Module=require('node:module'),path=require('node:path'),fs=require('node:fs');
-function dashboard(){const filename=path.resolve(__dirname,'../client/src/dashboardModel.js');const mod=new Module(filename,module);mod.paths=Module._nodeModulePaths(path.dirname(filename));mod._compile(transformSync(fs.readFileSync(filename,'utf8'),{format:'cjs'}).code,filename);return mod.exports;}
+function dashboard(){const filename=path.resolve(__dirname,'../client/src/dashboardModel.js');const mod=new Module(filename,module);mod.filename=filename;mod.paths=Module._nodeModulePaths(path.dirname(filename));mod._compile(transformSync(fs.readFileSync(filename,'utf8'),{format:'cjs'}).code,filename);return mod.exports;}
 const id='12345678-1234-1234-1234-123456789012';
 
 test('printer invoice keeps blank phone optional, defaults quantity to one and rejects fractional units',async()=>{
@@ -13,6 +13,19 @@ test('printer invoice keeps blank phone optional, defaults quantity to one and r
  const result=await service.request('/printer-sales',{method:'POST',body:JSON.stringify(body)});
  assert.equal(result.quantity,1);assert.equal(result.customer_phone,null);assert.equal(result.counter,null);assert.equal(writes[0].table,'printer_sales');
  await assert.rejects(service.request('/printer-sales',{method:'POST',body:JSON.stringify({...body,quantity:1.5})}),/integer/);
+});
+
+test('printer accessories save in the same invoice, strip UI keys and validate every line',async()=>{
+ let saved;
+ const service=createBusiness(async input=>{saved=input;return [{id:1,...input.payload}];});
+ const body={item_name:'Printer',quantity:1,unit_price:5500,request_id:id,extra_items:[{_key:'ui-key',item_name:'  A4 paper  ',quantity:2,unit_price:150},{item_name:'Cable',quantity:'',unit_price:0}]};
+ const result=await service.request('/printer-sales',{method:'POST',body:JSON.stringify(body)});
+ assert.equal(saved.table,'printer_sales');assert.deepEqual(result.extra_items,[{item_name:'A4 paper',quantity:2,unit_price:150},{item_name:'Cable',quantity:1,unit_price:0}]);
+ const previous=saved;
+ for(const invalid of [[{item_name:'',quantity:1,unit_price:2}],[{item_name:'Ink',quantity:-1,unit_price:2}],[{item_name:'Ink',quantity:1.5,unit_price:2}],[{item_name:'Ink',quantity:1,unit_price:''}],[{item_name:'Ink',quantity:1,unit_price:-1}],Array(51).fill({item_name:'Ink',quantity:1,unit_price:1}),{}]){
+  await assert.rejects(service.request('/printer-sales',{method:'POST',body:JSON.stringify({...body,extra_items:invalid})}));
+  assert.equal(saved,previous);
+ }
 });
 
 test('stock adjustment replaces quantity and empty minimum remains automatic',async()=>{
@@ -78,10 +91,13 @@ test('database adapter binds filter and update values correctly and rejects acco
  await db({action:'update',table:'components',eq:[['id',4]],payload:{stock_qty:6}});
  assert.match(sql,/"stock_qty" = \$2 WHERE "id" = \$1/);assert.deepEqual(params,[4,6]);
  await assert.rejects(db({action:'select',table:'app_users'}),/not allowed/);
+ const extra_items=[{item_name:'Paper',quantity:2,unit_price:150}];
+ await db({action:'insert',table:'printer_sales',payload:{item_name:'Printer',extra_items}});
+ assert.equal(params[1],JSON.stringify(extra_items));assert.match(sql,/ON CONFLICT\(request_id\)/);
 });
 test('dashboard periods respect Cairo, delivered repairs, revenue vs profit and all-time dues',()=>{
  const {DateTime}=require('../client/node_modules/luxon');const {dashboardModel}=dashboard();
- const data={sales:[{units_sold:2,revenue_egp:11000,gross_profit_egp:4000,is_accounted:false,manufacturing_cost_per_unit:800,sold_at:'2026-10-20T22:00:00Z'},{units_sold:1,revenue_egp:5500,gross_profit_egp:1000,is_accounted:false,manufacturing_cost_per_unit:1000,sold_at:'2026-10-01T10:00:00Z'}],printers:[{quantity:1,unit_price:5000,sold_at:'2026-10-21T09:00:00Z'}],maintenance:[{delivered:true,repair_charge_egp:600,delivered_at:'2026-10-21T10:00:00Z'},{status:'completed',delivered:false,repair_charge_egp:900,completed_at:'2026-10-21T10:00:00Z'}],manufacturing:[],products:[]};
+ const data={sales:[{units_sold:2,revenue_egp:11000,gross_profit_egp:4000,is_accounted:false,manufacturing_cost_per_unit:800,sold_at:'2026-10-20T22:00:00Z'},{units_sold:1,revenue_egp:5500,gross_profit_egp:1000,is_accounted:false,manufacturing_cost_per_unit:1000,sold_at:'2026-10-01T10:00:00Z'}],printers:[{quantity:1,unit_price:5000,extra_items:[{item_name:'Paper',quantity:2,unit_price:150}],sold_at:'2026-10-21T09:00:00Z'}],maintenance:[{delivered:true,repair_charge_egp:600,delivered_at:'2026-10-21T10:00:00Z'},{status:'completed',delivered:false,repair_charge_egp:900,completed_at:'2026-10-21T10:00:00Z'}],manufacturing:[],products:[]};
  const result=dashboardModel(data,'today','','',DateTime.fromISO('2026-10-21T12:00:00Z'));
- assert.equal(result.revenue,16600);assert.equal(result.profit,4000);assert.equal(result.unpaidAmount,2600);assert.equal(result.unpaidUnits,3);assert.equal(result.ready.length,1);assert.equal(result.units,2);
+ assert.equal(result.revenue,16900);assert.equal(result.printerRevenue,5300);assert.equal(result.buckets[0].printers,5300);assert.equal(result.profit,4000);assert.equal(result.unpaidAmount,2600);assert.equal(result.unpaidUnits,3);assert.equal(result.ready.length,1);assert.equal(result.units,2);
 });

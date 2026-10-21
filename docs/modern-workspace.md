@@ -12,6 +12,12 @@ restore snapshot data into a live system without reconciling later transactions.
 
 ## Interface
 
+Printer invoices accept an optional `extra_items` JSON array on the same sale row.
+Each accessory stores name, quantity and unit price. Invoice totals, printer
+revenue and search include these items; the printer count remains the main line's
+quantity. Existing invoices default to an empty list. Migration 011 is applied
+automatically; accessories are free-text sales and do not adjust component stock.
+
 - Grouped sidebar with collapse/search on desktop; drawer and bottom navigation
   on mobile. Existing routes remain valid. Original logo is retained.
 - Cairo font is bundled locally. Shared form labels, focus management, dirty-form

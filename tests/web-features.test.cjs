@@ -87,6 +87,18 @@ test('new invoices initialize optional fields blank, current Cairo seconds and u
   assert.ok(Math.abs(DateTime.fromISO(invoice.sold_at,{zone:'Africa/Cairo'}).toMillis()-Date.now())<2000);
   assert.notEqual(invoice.request_id,newPrinterInvoice().request_id);
 });
+test('invoice extras calculate totals, remain searchable and preserve legacy invoices',()=>{
+ const {printerInvoiceTotal,filterPrinterSales,newPrinterInvoice,newPrinterExtra}=loadClientModule('printerInvoices.js');
+ assert.deepEqual(newPrinterInvoice().extra_items,[]);
+ assert.notEqual(newPrinterExtra()._key,newPrinterExtra()._key);
+ const invoice={id:1,item_name:'Printer',quantity:1,unit_price:5500,sold_at:'2026-10-21T10:00:00Z',extra_items:[{item_name:'A4 Paper',quantity:2,unit_price:150},{item_name:'Cable',quantity:1,unit_price:75}]};
+ assert.equal(printerInvoiceTotal(invoice),5875);
+ assert.equal(printerInvoiceTotal({...invoice,extra_items:[]}),5500);
+ assert.equal(printerInvoiceTotal({quantity:2,unit_price:100}),200);
+ assert.equal(printerInvoiceTotal({quantity:3,unit_price:0.1,extra_items:[{quantity:1,unit_price:0.2}]}),0.5);
+ assert.equal(filterPrinterSales([invoice],{q:'paper'}).length,1);
+});
+
 test('routes preserve manufacturing, maintenance, printer and settings subsections',()=>{
   const {tabForLocation}=loadClientModule('navigation.js');
   assert.equal(tabForLocation('/manufacturing/completed'),'manufacturing');

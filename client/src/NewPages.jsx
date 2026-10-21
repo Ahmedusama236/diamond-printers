@@ -1,7 +1,7 @@
 import {useEffect,useState,useRef} from 'react';
 import {DateTime} from 'luxon';
 import {navigate,useLocation} from './navigation';
-import {newPrinterInvoice,filterPrinterSales} from './printerInvoices';
+import {newPrinterInvoice,newPrinterExtra,printerInvoiceTotal,filterPrinterSales} from './printerInvoices';
 const zone='Africa/Cairo';
 const money=value=>Number(value || 0).toLocaleString('ar-EG',{maximumFractionDigits:2});
 
@@ -43,7 +43,7 @@ export function Dashboard({api}) {
         <h3>{unpaid.reduce((s,r)=>s+Number(r.units_sold),0)} قطعة</h3>
         <p>المستحق: {money(unpaid.reduce((s,r)=>s+Number(r.units_sold)*Number(r.manufacturing_cost_per_unit ?? 1000),0))} جنيه</p></article>
       <article><a href="/printers/sales" onClick={link}>مبيعات الطابعات ↗</a>
-        <h3>مبيعات اليوم: {money(todayPrinters.reduce((s,r)=>s+r.quantity*Number(r.unit_price),0))} جنيه</h3>
+        <h3>مبيعات اليوم: {money(todayPrinters.reduce((s,r)=>s+printerInvoiceTotal(r),0))} جنيه</h3>
         <p>{todayPrinters.length} فاتورة اليوم</p></article>
     </div></section>;
 }
@@ -59,6 +59,7 @@ export function PrintersPage({api,Modal,DataTable}) {
   const load=async()=>{setRows(await api.get('/printer-sales'));};
   useEffect(()=>{load().catch(e=>setError(e.message));},[]);
   const change=(key,value)=>setForm(s=>({...s,[key]:value}));
+  const changeExtra=(key,field,value)=>setForm(s=>({...s,extra_items:s.extra_items.map(item=>item._key===key?{...item,[field]:value}:item)}));
   const filtered=filterPrinterSales(rows,filters);
   return <section><h2>الطابعات</h2><div className="subTabs">
     <button className={!history?'active':''} onClick={()=>navigate('/printers/sell')}>بيع</button>
@@ -68,8 +69,8 @@ export function PrintersPage({api,Modal,DataTable}) {
       <div className="filterBar"><label>من <input type="date" value={filters.from} onChange={e=>setFilters(s=>({...s,from:e.target.value}))}/></label>
         <label>إلى <input type="date" value={filters.to} onChange={e=>setFilters(s=>({...s,to:e.target.value}))}/></label>
         <input placeholder="بحث بالصنف أو العميل أو رقم الفاتورة" value={filters.q} onChange={e=>setFilters(s=>({...s,q:e.target.value}))}/></div>
-      <p>{filtered.length} فاتورة — {filtered.reduce((s,r)=>s+Number(r.quantity),0)} طابعة — إجمالي {money(filtered.reduce((s,r)=>s+r.quantity*Number(r.unit_price),0))} جنيه</p>
-      <DataTable searchable={false} columns={['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','الإجمالي','العداد','العميل','الهاتف']} rows={filtered} secondaryColumns={[6,8]} emptyText="لا توجد فواتير" renderRow={r=><><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(r.quantity*r.unit_price)}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td></>}/></>}
+      <p>{filtered.length} فاتورة — {filtered.reduce((s,r)=>s+Number(r.quantity),0)} طابعة — إجمالي {money(filtered.reduce((s,r)=>s+printerInvoiceTotal(r),0))} جنيه</p>
+      <DataTable searchable={false} columns={['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','إجمالي الفاتورة','العداد','العميل','الهاتف','الأصناف الإضافية']} rows={filtered} secondaryColumns={[6,8,9]} emptyText="لا توجد فواتير" renderRow={r=><><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}{r.extra_items?.length>0&&<small className="printerExtraHint">+ {r.extra_items.length} صنف إضافي</small>}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(printerInvoiceTotal(r))}</td><td>{r.counter ?? '—'}</td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td><td>{r.extra_items?.length?<ul className="printerExtraList">{r.extra_items.map((item,i)=><li key={i}><strong>{item.item_name}</strong><span>{item.quantity} × {money(item.unit_price)} جنيه = {money(item.quantity*item.unit_price)} جنيه</span></li>)}</ul>:'—'}</td></>}/></>}
     {form&&<Modal title="فاتورة بيع طابعات" onClose={()=>{if(!saving)setForm(null);}}>
       <form className="gridForm" onSubmit={async e=>{
         e.preventDefault();if(lock.current)return;lock.current=true;setSaving(true);setError('');
@@ -81,11 +82,19 @@ export function PrintersPage({api,Modal,DataTable}) {
         <label>العدد<input type="number" min="1" step="1" placeholder="1" value={form.quantity} onChange={e=>change('quantity',e.target.value)} onBlur={()=>{if(form.quantity==='')change('quantity',1);}}/></label>
         <label>سعر الوحدة<input type="number" required min="0" step="0.01" value={form.unit_price} onChange={e=>change('unit_price',e.target.value)}/></label>
         <label>العداد (اختياري)<input type="number" min="0" step="1" value={form.counter} onChange={e=>change('counter',e.target.value)}/></label>
+        <fieldset className="printerExtras" disabled={saving}>
+          <div className="printerExtrasHeader"><div><h4>أصناف مع الطابعة</h4><p>ورق، حبر، كابل أو أي صنف اشتراه العميل</p></div><button type="button" disabled={saving||form.extra_items.length>=50} onClick={()=>setForm(s=>({...s,extra_items:[...s.extra_items,newPrinterExtra()]}))}>＋ إضافة صنف</button></div>
+          {form.extra_items.map((item,index)=><article className="printerExtraLine" key={item._key}>
+            <div className="printerExtraLineHeader"><strong>صنف إضافي {index+1}</strong><button type="button" className="removePrinterExtra" aria-label={`إزالة الصنف الإضافي ${index+1}`} title="إزالة الصنف" onClick={()=>setForm(s=>({...s,extra_items:s.extra_items.filter(row=>row._key!==item._key)}))}>×</button></div>
+            <div className="printerExtraFields"><label>اسم الصنف<input required placeholder="مثال: ورق A4" value={item.item_name} onChange={e=>changeExtra(item._key,'item_name',e.target.value)}/></label><label>العدد<input type="number" min="1" step="1" placeholder="1" value={item.quantity} onChange={e=>changeExtra(item._key,'quantity',e.target.value)} onBlur={()=>{if(item.quantity==='')changeExtra(item._key,'quantity',1);}}/></label><label>سعر الوحدة<input type="number" required min="0" step="0.01" value={item.unit_price} onChange={e=>changeExtra(item._key,'unit_price',e.target.value)}/></label></div>
+            <p className="printerExtraSubtotal">إجمالي الصنف: {money(printerInvoiceTotal(item))} جنيه</p>
+          </article>)}
+        </fieldset>
         <label>هاتف العميل (اختياري)<input type="tel" value={form.customer_phone} onChange={e=>change('customer_phone',e.target.value)}/></label>
         <label>اسم العميل (اختياري)<input value={form.customer_name} onChange={e=>change('customer_name',e.target.value)}/></label>
         <label>التاريخ والوقت — القاهرة<input type="datetime-local" required step="1" value={form.sold_at} onChange={e=>change('sold_at',e.target.value)}/></label>
-        <p>الإجمالي: {money((form.quantity === '' ? 1 : form.quantity)*form.unit_price)} جنيه</p>
-        <button disabled={saving} className="primaryButton">{saving?'جارٍ الحفظ…':'حفظ'}</button><button disabled={saving} type="button" onClick={()=>setForm(null)}>إلغاء</button>
+        <div className="printerInvoiceTotal"><span>إجمالي الفاتورة</span><strong>{money(printerInvoiceTotal(form))} جنيه</strong></div>
+        <button disabled={saving} className="primaryButton printerInvoiceSave">{saving?'جارٍ الحفظ…':'حفظ'}</button>
       </form></Modal>}
   </section>;
 }

@@ -107,6 +107,9 @@ async function ensureSchema(database) {
     WHERE cost_includes_manufacturing = false
   `);
   await runMigration(database,'business_schema_v11',statements);
+  await runMigration(database,'printer_invoice_extras_v1',[
+    `ALTER TABLE public.printer_sales ADD COLUMN IF NOT EXISTS extra_items jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(extra_items) = 'array')`,
+  ]);
   schemaReady = true;
 }
 

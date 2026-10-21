@@ -840,7 +840,16 @@ async function handlePost(pathname, body) {
   }
   if (pathname === '/accounts') return authRequest('create',body);
   if (pathname === '/printer-sales') {
+    if(body.extra_items != null && (!Array.isArray(body.extra_items)||body.extra_items.length>50))throw new Error('يمكن إضافة حتى 50 صنفًا إضافيًا في الفاتورة');
+    const extraItems=(body.extra_items||[]).map((item,index)=>{
+      if(!item||typeof item!=='object')throw new Error('بيانات الصنف الإضافي غير صالحة');
+      const name=String(item.item_name||'').trim();
+      if(!name)throw new Error(`أدخل اسم الصنف الإضافي ${index+1} أو احذفه`);
+      if(item.unit_price===''||item.unit_price==null)throw new Error(`أدخل سعر الصنف الإضافي ${index+1}`);
+      return {item_name:name,quantity:toPositiveInt(item.quantity === '' || item.quantity == null?1:item.quantity,'quantity'),unit_price:toNonNegativeNumber(item.unit_price,'unit_price')};
+    });
     return insertRow('printer_sales', {
+      extra_items:extraItems,
       item_name:requireName(body.item_name),quantity:toPositiveInt(body.quantity === '' || body.quantity == null ? 1 : body.quantity,'quantity'),
       unit_price:toNonNegativeNumber(body.unit_price,'unit_price'),
       counter:body.counter === '' || body.counter == null ? null : toNonNegativeInt(body.counter,'counter'),
