@@ -3,6 +3,7 @@ import {DateTime} from 'luxon';
 import {navigate,useLocation} from './navigation';
 import {newPrinterInvoice,newPrinterExtra,editPrinterInvoice,printerInvoiceTotal,filterPrinterSales} from './printerInvoices';
 import {SerialScannerButton} from './SerialScanner';
+import {PaymentFields,InvoiceChecks,paymentPayload} from './InvoiceFields';
 const zone='Africa/Cairo';
 const money=value=>Number(value || 0).toLocaleString('ar-EG',{maximumFractionDigits:2});
 
@@ -55,7 +56,7 @@ export function PrintersPage({api,Modal,DataTable}) {
   const history=location.startsWith('/printers/sales');
   const [rows,setRows]=useState([]),[form,setForm]=useState(null),[saving,setSaving]=useState(false),[error,setError]=useState('');
   const lock=useRef(false);
-  useEffect(()=>{if(new URLSearchParams(location.split('?')[1]||'').get('new')==='1'){setForm(newPrinterInvoice());navigate('/printers/sell');}},[location]);
+  useEffect(()=>{const p=new URLSearchParams(location.split('?')[1]||'');if(p.get('new')==='1'){setForm(newPrinterInvoice());navigate('/printers/sell');}if(p.get('edit')){api.get('/printer-sales').then(data=>{const row=data.find(r=>String(r.id)===p.get('edit'));if(row)setForm(editPrinterInvoice(row));else setError('الفاتورة غير موجودة');navigate('/printers/sell');}).catch(e=>setError(e.message));}},[location]);
   const [filters,setFilters]=useState({from:'',to:'',q:''});
   const load=async()=>{setRows(await api.get('/printer-sales'));};
   useEffect(()=>{load().catch(e=>setError(e.message));},[]);
@@ -64,7 +65,7 @@ export function PrintersPage({api,Modal,DataTable}) {
   const filtered=filterPrinterSales(rows,filters);
   return <section><h2>الطابعات</h2><div className="subTabs">
     <button className={!history?'active':''} onClick={()=>navigate('/printers/sell')}>بيع</button>
-    <button className={history?'active':''} onClick={()=>navigate('/printers/sales')}>المبيعات</button></div>
+    <button onClick={()=>navigate('/sales?kind=printer')}>كل مبيعات الطابعات</button></div>
     {error&&<div className="error">{error}</div>}
     {!history?<button className="primaryButton" onClick={()=>{setError('');setForm(newPrinterInvoice());}}>＋ إنشاء فاتورة</button>:<>
       <div className="filterBar"><label>من <input type="date" value={filters.from} onChange={e=>setFilters(s=>({...s,from:e.target.value}))}/></label>
@@ -72,10 +73,10 @@ export function PrintersPage({api,Modal,DataTable}) {
         <input placeholder="بحث بالصنف أو السريل نامبر أو العميل أو رقم الفاتورة" value={filters.q} onChange={e=>setFilters(s=>({...s,q:e.target.value}))}/></div>
       <p>{filtered.length} فاتورة — {filtered.reduce((s,r)=>s+Number(r.quantity),0)} طابعة — إجمالي {money(filtered.reduce((s,r)=>s+printerInvoiceTotal(r),0))} جنيه</p>
       <DataTable searchable={false} columns={['الفاتورة','التاريخ','الصنف','العدد','سعر الوحدة','إجمالي الفاتورة','العداد','السريل نامبر','العميل','الهاتف','الأصناف الإضافية','إجراءات']} rows={filtered} secondaryColumns={[9,10]} emptyText="لا توجد فواتير" renderRow={r=><><td>#{r.id}</td><td>{DateTime.fromISO(r.sold_at).setZone(zone).toFormat('yyyy-MM-dd HH:mm:ss')}</td><td>{r.item_name}{r.extra_items?.length>0&&<small className="printerExtraHint">+ {r.extra_items.length} صنف إضافي</small>}</td><td>{r.quantity}</td><td>{money(r.unit_price)}</td><td>{money(printerInvoiceTotal(r))}</td><td>{r.counter ?? '—'}</td><td><span dir="ltr">{r.serial_number || '—'}</span></td><td>{r.customer_name || '—'}</td><td>{r.customer_phone || '—'}</td><td>{r.extra_items?.length?<ul className="printerExtraList">{r.extra_items.map((item,i)=><li key={i}><strong>{item.item_name}</strong><span>{item.quantity} × {money(item.unit_price)} جنيه = {money(item.quantity*item.unit_price)} جنيه</span></li>)}</ul>:'—'}</td><td><button type="button" onClick={()=>{setError('');setForm(editPrinterInvoice(r));}}>تعديل</button></td></>}/></>}
-    {form&&<Modal title={form.id?`تعديل فاتورة #${form.id}`:'فاتورة بيع طابعات'} onClose={()=>{if(!saving)setForm(null);}}>
+    {form&&<Modal title={form.id?`تعديل فاتورة #${form.id}`:'فاتورة بيع طابعات'} onClose={()=>{if(!saving){setForm(null);navigate('/sales?kind=printer');}}}>
       <form className="gridForm" onSubmit={async e=>{
         e.preventDefault();if(lock.current)return;lock.current=true;setSaving(true);setError('');
-        try{if(form.id)await api.put(`/printer-sales/${form.id}`,form);else await api.post('/printer-sales',form);setForm(null);await load();navigate('/printers/sales');}
+        try{const payload={...form,...paymentPayload(form,printerInvoiceTotal(form))};if(form.id)await api.put(`/printer-sales/${form.id}`,payload);else await api.post('/printer-sales',payload);setForm(null);navigate('/sales?kind=printer');}
         catch(err){setError(err.message);}finally{lock.current=false;setSaving(false);}
       }}>
         {error&&<div className="error">{error}</div>}
@@ -93,8 +94,10 @@ export function PrintersPage({api,Modal,DataTable}) {
           </article>)}
         </fieldset>
         <label>هاتف العميل (اختياري)<input type="tel" value={form.customer_phone} onChange={e=>change('customer_phone',e.target.value)}/></label>
-        <label>اسم العميل (اختياري)<input value={form.customer_name} onChange={e=>change('customer_name',e.target.value)}/></label>
+        <label>اسم العميل {form.payment_mode&&form.payment_mode!=='paid'?'(مطلوب للمبلغ المتبقي)':'(اختياري)'}<input required={form.payment_mode&&form.payment_mode!=='paid'} value={form.customer_name} onChange={e=>change('customer_name',e.target.value)}/></label>
         <label>التاريخ والوقت — القاهرة<input type="datetime-local" required step="1" value={form.sold_at} onChange={e=>change('sold_at',e.target.value)}/></label>
+        {!form.id&&<PaymentFields form={form} change={change} total={printerInvoiceTotal(form)}/>}
+        <InvoiceChecks form={form} total={printerInvoiceTotal(form)} originalTotal={form.original_total}/>
         <div className="printerInvoiceTotal"><span>إجمالي الفاتورة</span><strong>{money(printerInvoiceTotal(form))} جنيه</strong></div>
         <button disabled={saving} className="primaryButton printerInvoiceSave">{saving?'جارٍ الحفظ…':form.id?'حفظ التعديلات':'حفظ'}</button>
       </form></Modal>}

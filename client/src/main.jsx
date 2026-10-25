@@ -9,6 +9,7 @@ import '@fontsource/cairo/latin-400.css';
 import '@fontsource/cairo/latin-600.css';
 import '@fontsource/cairo/latin-700.css';
 import "./modern.css";
+import "./salesHub.css";
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>

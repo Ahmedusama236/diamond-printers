@@ -1,8 +1,11 @@
 import { DateTime } from "luxon";
+import {createInvoiceLedger} from './invoiceLedger.js';
+import {accountingProduct,filterInvoices,salesTotals} from './salesModel.js';
 
 // Each operation owns its database connection and helper scope.
-export function createBusiness(databaseRequest) {
+export function createBusiness(databaseRequest, context={}) {
 const readCache = new Map();
+const invoices=createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,insertLedger,actor:context.actor,nowIso,toUtcIsoFromInput});
 
 const DATA_API_URL = import.meta.env.VITE_DATA_API_URL || "/api/data";
 
@@ -43,7 +46,7 @@ function requireName(value, field = "name") {
 
 function toInt(value, fieldName) {
   const parsed = Number(value);
-  if (value === '' || value == null || !Number.isSafeInteger(parsed)) {
+  if (!['string','number'].includes(typeof value) || String(value).trim()==='' || !Number.isSafeInteger(parsed)) {
     throw new Error(`${fieldName} must be an integer`);
   }
   return parsed;
@@ -51,7 +54,7 @@ function toInt(value, fieldName) {
 
 function toPositiveInt(value, fieldName) {
   const parsed = toInt(value, fieldName);
-  if (parsed <= 0) {
+  if (parsed <= 0 || parsed>2147483647) {
     throw new Error(`${fieldName} must be greater than 0`);
   }
   return parsed;
@@ -67,7 +70,7 @@ function toNonNegativeInt(value, fieldName) {
 
 function toNonNegativeNumber(value, fieldName) {
   const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
+  if (!['string','number'].includes(typeof value) || String(value).trim()==='' || !Number.isFinite(parsed) || parsed < 0 || parsed>999999999999) {
     throw new Error(`${fieldName} must be a number >= 0`);
   }
   return parsed;
@@ -87,8 +90,13 @@ function printerInvoicePayload(body,current={}) {
     if(item.unit_price===''||item.unit_price==null)throw new Error(`أدخل سعر الصنف الإضافي ${index+1}`);
     return {item_name:name,quantity:toPositiveInt(item.quantity === '' || item.quantity == null?1:item.quantity,'quantity'),unit_price:toNonNegativeNumber(item.unit_price,'unit_price')};
   });
+  if(values.unit_price===''||values.unit_price==null)throw new Error('أدخل سعر الوحدة');
+  const quantity=toPositiveInt(values.quantity === '' || values.quantity == null?1:values.quantity,'quantity');
+  const total=quantity*Number(values.unit_price)+extraItems.reduce((s,i)=>s+i.quantity*i.unit_price,0);
+  if(!Number.isFinite(total)||total>999999999999)throw new Error('إجمالي الفاتورة أكبر من الحد المسموح');
+  if(values.serial_number&&String(values.serial_number).trim()&&quantity!==1)throw new Error('عند تسجيل سريل، سجّل كل طابعة في فاتورة مستقلة');
   return {
-    item_name:requireName(values.item_name),quantity:toPositiveInt(values.quantity === '' || values.quantity == null?1:values.quantity,'quantity'),
+    item_name:requireName(values.item_name),quantity,
     unit_price:toNonNegativeNumber(values.unit_price,'unit_price'),extra_items:extraItems,
     counter:values.counter === '' || values.counter == null?null:toNonNegativeInt(values.counter,'counter'),
     serial_number:values.serial_number == null?null:String(values.serial_number).trim()||null,
@@ -442,6 +450,7 @@ function buildCsv(report) {
     ),
     "",
     ["summary", "", "", "", "", ""].join(","),
+    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','refund_due_egp','unreviewed_invoices','incomplete_cost_invoices'].map(key=>[key,report.summary[key]].join(',')),
     ["revenue_egp", report.summary.revenue_egp].join(","),
     ["purchase_cost_egp", report.summary.purchase_cost_egp].join(","),
     ["gross_profit_egp", report.summary.gross_profit_egp].join(","),
@@ -506,17 +515,19 @@ async function calculateSaleMetrics(productId, unitsSold, unitSellPriceEgp, manu
   const bomItems = await getBomItems(productId);
   if (!bomItems.length) throw new Error("Product does not have BOM items");
   let unitPurchaseCost = 0;
+  let costComplete=true;
   for (const item of bomItems) {
     const latestPrice = await getLatestPriceForComponent(item.component_id);
-    if (!latestPrice) continue;
+    if (!latestPrice) {costComplete=false;continue;}
     unitPurchaseCost += item.qty_per_unit * latestPrice.price_egp;
   }
   const unitPurchaseCostEgp = round2(unitPurchaseCost + manufacturingCostPerUnit);
   const totalPurchaseCostEgp = round2(unitPurchaseCostEgp * unitsSold);
   const revenueEgp = round2(unitSellPriceEgp * unitsSold);
+  if(!Number.isFinite(revenueEgp)||revenueEgp>999999999999)throw new Error('إجمالي الفاتورة أكبر من الحد المسموح');
   const grossProfitEgp = round2(revenueEgp - totalPurchaseCostEgp);
   const marginPct = revenueEgp === 0 ? 0 : round2((grossProfitEgp / revenueEgp) * 100);
-  return { unitPurchaseCostEgp, totalPurchaseCostEgp, revenueEgp, grossProfitEgp, marginPct };
+  return { unitPurchaseCostEgp, totalPurchaseCostEgp, revenueEgp, grossProfitEgp, marginPct,costComplete };
 }
 
 async function applySale(recordId, productId, unitsSold) {
@@ -609,10 +620,9 @@ async function buildDamagedReport(period, query, rangeOverride = null) {
 
 async function buildSalesReport(period, query) {
   const { start, end } = getDateRange(period, query);
-  const [rows, products] = await Promise.all([
-    selectRows("sales_records", { order: [["sold_at", true]] }),
-    getProductsRaw(),
-  ]);
+  const allInvoices=await invoices.list();
+  const rows=allInvoices.filter(r=>r.kind==='product').map(accountingProduct),products=await getProductsRaw();
+  const unified=salesTotals(filterInvoices(allInvoices,{from:start.toISODate(),to:end.toISODate()}));
   const productMap = new Map(products.map((row) => [row.id, row]));
   const filtered = [];
   for (const row of rows) {
@@ -651,7 +661,7 @@ async function buildSalesReport(period, query) {
     bucket.gross_profit_egp += row.gross_profit_egp;
     bucket.units_sold += row.units_sold;
   }
-  const maintenanceTickets = (await getMaintenanceTickets()).filter((ticket) => {
+  const maintenanceTickets = (await getMaintenanceTickets()).map(ticket=>({...ticket,repair_charge_egp:allInvoices.find(r=>r.kind==='maintenance'&&r.source_id===ticket.id)?.net??ticket.repair_charge_egp})).filter((ticket) => {
     if (!ticket.delivered || !ticket.delivered_at) return false;
     const deliveredAt = DateTime.fromISO(ticket.delivered_at, { zone: "utc" }).setZone(CAIRO_TZ);
     return deliveredAt >= start && deliveredAt <= end;
@@ -671,6 +681,8 @@ async function buildSalesReport(period, query) {
     start_cairo: start.toISO(),
     end_cairo: end.toISO(),
     summary: {
+      unified_sales_egp:unified.sales,recorded_collections_egp:unified.collected,customer_due_egp:unified.due,refund_due_egp:unified.refund,unreviewed_invoices:unified.unknown,
+      incomplete_cost_invoices:filtered.filter(r=>r.cost_complete!==true&&r.units_sold>0).length,
       revenue_egp: round2(totalRevenue),
       purchase_cost_egp: round2(totalPurchaseCost),
       gross_profit_egp: round2(totalGrossProfit),
@@ -716,10 +728,11 @@ async function buildSalesReport(period, query) {
 }
 
 async function getMaintenanceTickets() {
-  const [tickets, parts, components] = await Promise.all([
+  const [tickets, parts, components,metas] = await Promise.all([
     selectRows("maintenance_tickets", { order: [["opened_at", false]] }),
     selectRows("maintenance_parts", { order: [["id", true]] }),
     getComponentsRaw(),
+    selectRows('sales_invoice_meta'),
   ]);
   const componentMap = new Map(components.map((row) => [row.id, row]));
   return tickets.map((ticket) => {
@@ -729,6 +742,7 @@ async function getMaintenanceTickets() {
     const partsCost = round2(ticketParts.reduce((total, part) => total + Number(part.total_price_egp), 0));
     return {
       ...ticket,
+      invoice_revision:metas.find(m=>m.kind==='maintenance'&&m.source_id===ticket.id)?.revision||0,
       parts: ticketParts,
       parts_cost_egp: partsCost,
       maintenance_profit_egp: round2(Number(ticket.repair_charge_egp) - partsCost),
@@ -737,12 +751,17 @@ async function getMaintenanceTickets() {
 }
 
 async function handleGet(pathname, query) {
+  if(pathname==='/sales-hub')return invoices.list();
+  if(/^\/sales-hub\/(product|printer|maintenance)\/\d+$/.test(pathname)){
+    const [, ,kind,id]=pathname.split('/');const row=await invoices.get(kind,Number(id));
+    return {...row,events:row.meta?await selectRows('sales_events',{eq:[['invoice_id',row.meta.id]],order:[['id',false]]}):[]};
+  }
   if (pathname === '/dashboard') {
     const [shortages,sales,manufacturing,printers,products,maintenance]=await Promise.all([
       handleGet('/shortages',{}),handleGet('/sales-records',{}),handleGet('/manufacturing-records',{}),
       handleGet('/printer-sales',{}),handleGet('/products',{}),handleGet('/maintenance-tickets',{}),
     ]);
-    return {shortages,sales,manufacturing,printers,products,maintenance};
+    return {shortages,sales,manufacturing,printers,products,maintenance,invoices:await invoices.list()};
   }
   if (pathname === "/auth/status") {
     const result = await authRequest('status');
@@ -788,9 +807,10 @@ async function handleGet(pathname, query) {
       getProductsRaw(),
     ]);
     const productMap = new Map(products.map((row) => [row.id, row]));
-    return rows.map((row) => ({ ...row, product_name: productMap.get(row.product_id)?.name || "" }));
+    const metas=await selectRows('sales_invoice_meta');
+    return rows.map((row) => ({ ...row, product_name: productMap.get(row.product_id)?.name || "",invoice_revision:metas.find(m=>m.kind==='product'&&m.source_id===row.id)?.revision||0 }));
   }
-  if (pathname === '/printer-sales') return selectRows('printer_sales',{order:[['sold_at',false]]});
+  if (pathname === '/printer-sales') {const [rows,metas]=await Promise.all([selectRows('printer_sales',{order:[['sold_at',false]]}),selectRows('sales_invoice_meta')]);return rows.map(row=>({...row,invoice_revision:metas.find(m=>m.kind==='printer'&&m.source_id===row.id)?.revision||0}));}
   if (pathname === '/accounts') return (await authRequest('list')).users;
   if (pathname === "/damage-records") {
     const [rows, components] = await Promise.all([
@@ -982,6 +1002,8 @@ async function handlePost(pathname, body) {
     const created = await insertRow("sales_records", {
       product_id: productId,
       units_sold: unitsSold,
+      customer_name:body.customer_name?String(body.customer_name).trim()||null:null,
+      customer_phone:body.customer_phone?String(body.customer_phone).trim()||null:null,
       unit_sell_price_egp: unitSellPriceEgp,
       unit_purchase_cost_egp: metrics.unitPurchaseCostEgp,
       total_purchase_cost_egp: metrics.totalPurchaseCostEgp,
@@ -991,6 +1013,7 @@ async function handlePost(pathname, body) {
       is_accounted: false,
       manufacturing_cost_per_unit: manufacturingCostPerUnit,
       cost_includes_manufacturing: true,
+      cost_complete:metrics.costComplete,
       sold_at: soldAt,
       created_at: nowIso(),
       updated_at: nowIso(),
@@ -1302,6 +1325,8 @@ async function handlePut(pathname, body) {
     const updated = (await updateRows("sales_records", {
       product_id: productId,
       units_sold: unitsSold,
+      customer_name:body.customer_name!==undefined?String(body.customer_name).trim()||null:current.customer_name,
+      customer_phone:body.customer_phone!==undefined?String(body.customer_phone).trim()||null:current.customer_phone,
       unit_sell_price_egp: unitSellPriceEgp,
       unit_purchase_cost_egp: metrics.unitPurchaseCostEgp,
       total_purchase_cost_egp: metrics.totalPurchaseCostEgp,
@@ -1310,6 +1335,7 @@ async function handlePut(pathname, body) {
       margin_pct: metrics.marginPct,
       manufacturing_cost_per_unit: manufacturingCostPerUnit,
       cost_includes_manufacturing: true,
+      cost_complete:metrics.costComplete,
       sold_at: soldAt,
       updated_at: nowIso(),
     }, [["id", recordId]]))[0];
@@ -1430,6 +1456,31 @@ async function request(path, options = {}) {
   const body = options.body ? JSON.parse(options.body) : {};
   const { pathname, query } = parsePath(path);
   if (pathname.startsWith('/auth/') || pathname.startsWith('/accounts')) throw withStatus(404, 'Route not found');
+  if(method==='POST'&&/^\/sales-hub\/(product|printer|maintenance)\/\d+\/(review|payment|return|cancel)$/.test(pathname)){
+    const [,,kind,id,action]=pathname.split('/');return invoices.mutate(kind,Number(id),action,body);
+  }
+  const match=pathname.match(/^\/(sales-records|printer-sales|maintenance-tickets)(?:\/(\d+))?$/);
+  // Production operations always supply the authenticated actor. Read helpers can run independently.
+  if(context.actor&&match&&method!=='GET'){
+    const kind={'sales-records':'product','printer-sales':'printer','maintenance-tickets':'maintenance'}[match[1]],id=Number(match[2]);
+    const current=id?await selectSingle(invoices.sourceTables[kind],{eq:[['id',id]]}):null;
+    const finalized=kind!=='maintenance'||current?.status==='completed';
+    if(method==='DELETE'&&finalized)throw new Error('استخدم إلغاء الفاتورة من المبيعات مع تسجيل السبب بدل الحذف');
+    const accountOnly=kind==='product'&&body.is_accounted!==undefined&&Object.keys(body).every(k=>k==='is_accounted');
+    if(current&&finalized&&!accountOnly)await invoices.before(kind,id,body);
+    if(kind==='printer'&&body.serial_number){
+      const serial=String(body.serial_number).trim().toUpperCase();
+      const all=await invoices.list();const duplicate=all.find(r=>r.kind==='printer'&&r.source_id!==id&&r.serial.toUpperCase()===serial&&r.state!=='cancelled'&&r.lines[0].returned<r.lines[0].quantity);
+      if(duplicate)throw new Error(`السريل مستخدم في فاتورة ${duplicate.number}؛ راجع الفاتورة قبل البيع`);
+      body.serial_number=serial;
+    }
+    const result=method==='POST'?await handlePost(pathname,body):method==='PUT'?await handlePut(pathname,body):await handleDelete(pathname);
+    if(method==='POST'&&kind!=='maintenance')await invoices.created(kind,result,body);
+    if(method==='PUT'&&current&&(finalized||result.status==='completed')){
+      if(!finalized)await invoices.created(kind,result,body);else await invoices.edited(kind,id,current,result);
+    }
+    return result;
+  }
   if (method === "GET") return handleGet(pathname, query);
   if (method === "POST") return handlePost(pathname, body);
   if (method === "PUT") return handlePut(pathname, body);

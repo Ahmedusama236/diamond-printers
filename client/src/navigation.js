@@ -3,7 +3,7 @@ export const paths = {
   dashboard:'/dashboard',suppliers:'/suppliers',components:'/components',inventory:'/components/inventory',
   purchases:'/purchases',productsBom:'/products',manufacturing:'/manufacturing/orders',sales:'/sales',
   damaged:'/damaged',maintenance:'/maintenance/request',shortage:'/shortages',reports:'/reports',
-  settings:'/settings',printers:'/printers/sell',
+  settings:'/settings',printers:'/printers/sell',productSales:'/sales/products',
 };
 export function navigate(path) {
   if (window.location.pathname + window.location.search === path) return;

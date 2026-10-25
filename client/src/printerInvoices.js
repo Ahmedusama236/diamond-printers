@@ -8,7 +8,7 @@ export function newPrinterExtra() {
 }
 export function editPrinterInvoice(invoice) {
   return {
-    id:invoice.id,item_name:invoice.item_name,quantity:invoice.quantity,unit_price:invoice.unit_price,
+    id:invoice.id,item_name:invoice.item_name,quantity:invoice.quantity,unit_price:invoice.unit_price,invoice_revision:invoice.invoice_revision??0,original_total:printerInvoiceTotal(invoice),
     counter:invoice.counter??'',serial_number:invoice.serial_number??'',customer_phone:invoice.customer_phone??'',customer_name:invoice.customer_name??'',
     sold_at:DateTime.fromISO(invoice.sold_at).setZone('Africa/Cairo').toFormat("yyyy-MM-dd'T'HH:mm:ss"),
     extra_items:(invoice.extra_items||[]).map(item=>({...item,_key:crypto.randomUUID()})),

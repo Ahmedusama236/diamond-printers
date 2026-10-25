@@ -1,6 +1,7 @@
 const { neon } = require("@neondatabase/serverless");
 const { ensureAuth, currentUser } = require('../lib/auth');
 const {runMigration} = require('../lib/migrations');
+const {salesSchemaStatements} = require('../lib/sales-schema');
 
 const TABLES = new Set([
   "suppliers",
@@ -113,6 +114,7 @@ async function ensureSchema(database) {
   await runMigration(database,'printer_serial_number_v1',[
     'ALTER TABLE public.printer_sales ADD COLUMN IF NOT EXISTS serial_number text',
   ]);
+  await runMigration(database,'unified_sales_20261025_v1',salesSchemaStatements);
   schemaReady = true;
 }
 

@@ -4,6 +4,8 @@ import { t as tr } from "./i18n";
 import { navigate, paths, tabForLocation, useLocation, useStage } from './navigation';
 import { PrintersPage, AccountsPage } from './NewPages';
 import { Overview } from './Overview';
+import {SalesHub} from './SalesHub';
+import {PaymentFields,InvoiceChecks,paymentPayload} from './InvoiceFields';
 import { WorkspaceNavigation, PageIntro } from './Workspace';
 import {DateTime} from 'luxon';
 
@@ -16,6 +18,7 @@ const TABS = [
   "productsBom",
   "manufacturing",
   "sales",
+  "productSales",
   "damaged",
   "maintenance",
   "shortage",
@@ -118,6 +121,7 @@ function App() {
   const [language, setLanguage] = useState("ar");
   const location = useLocation();
   const activeTab = tabForLocation(location);
+  useEffect(()=>{if(location.split('?')[0]==='/printers/sales')navigate('/sales?kind=printer');},[location]);
   const setActiveTab = (tab) => navigate(paths[tab] || '/dashboard');
   const [currentUser,setCurrentUser] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -189,10 +193,10 @@ function App() {
   useEffect(() => {
     if (!isAuthenticated || activeTab === 'dashboard') return;
     let cancelled=false;
-    const jobs = activeTab==='manufacturing'?[refreshManufacturing]:activeTab==='sales'?[refreshSales]:activeTab==='maintenance'?[refreshMaintenance]:activeTab==='damaged'?[refreshDamaged]:activeTab==='shortage'?[refreshShortages]:[];
+    const jobs = activeTab==='manufacturing'?[refreshManufacturing]:activeTab==='productSales'?[refreshSales]:activeTab==='maintenance'?[refreshMaintenance]:activeTab==='damaged'?[refreshDamaged]:activeTab==='shortage'?[refreshShortages]:[];
     if(['suppliers','components','purchases','shortage'].includes(activeTab))jobs.push(()=>api.get('/suppliers').then(setSuppliers));
     if(['components','inventory','purchases','productsBom','maintenance','damaged'].includes(activeTab))jobs.push(()=>api.get('/components').then(setComponents));
-    if(['productsBom','manufacturing','sales','inventory'].includes(activeTab))jobs.push(()=>api.get('/products').then(setProducts));
+    if(['productsBom','manufacturing','productSales','inventory'].includes(activeTab))jobs.push(()=>api.get('/products').then(setProducts));
     Promise.all(jobs.map(job=>job())).catch(e=>{if(!cancelled&&!handleRequestError(e))setError(e.message);});
     return ()=>{cancelled=true;};
   }, [isAuthenticated,activeTab]);
@@ -1123,7 +1127,8 @@ function App() {
           />
         )}
 
-        {activeTab === "sales" && (
+        {activeTab === 'sales' && <SalesHub api={api} Modal={Modal} DataTable={DataTable}/>}
+        {activeTab === "productSales" && (
           <SalesTab
             t={t}
             products={products}
@@ -1757,25 +1762,31 @@ function ManufacturingTab({ t, products, form, setForm, records, run, api, refre
 
 function SalesTab({ t, products, form, setForm, records, run, api, refreshAll }) {
   const [showForm, setShowForm] = useState(false);
-  useCreateIntent(()=>{setForm(blankSale());setShowForm(true);});
+  const [saleError,setSaleError]=useState(''),[saleSaving,setSaleSaving]=useState(false);
+  useCreateIntent(()=>{setSaleError('');setForm(blankSale());setShowForm(true);});
   const location=useLocation();
-  const unpaidOnly=new URLSearchParams(location.split('?')[1] || '').get('payment')==='unpaid';
+  const editId=new URLSearchParams(location.split('?')[1]||'').get('edit');
+  useEffect(()=>{if(!editId)return;const r=records.find(row=>String(row.id)===editId);if(!r)return;setForm({...r,product_id:String(r.product_id),sold_at:toLocalDateTimeValue(r.sold_at),customer_name:r.customer_name||'',customer_phone:r.customer_phone||'',original_total:r.revenue_egp});setShowForm(true);navigate('/sales/products');},[editId,records]);
+  const total=Number(form.units_sold||1)*Number(form.unit_sell_price_egp||0);
+  const change=(key,value)=>setForm(s=>({...s,[key]:value}));
   return (
     <section className="salesSection">
       <SectionHeader
-        title={t("sales")}
+        title="بيع منتج مصنّع"
         actionLabel={`＋ ${t("create")}`}
         onAction={() => {
           setForm(blankSale());
+          setSaleError('');
           setShowForm(true);
         }}
       />
-      {unpaidOnly && <div className="filterBar"><span>حساب التصنيع غير المدفوع</span><button onClick={()=>navigate('/sales')}>عرض كل المبيعات</button></div>}
+      <button onClick={()=>navigate('/sales?kind=product')}>عرض كل مبيعات المنتجات والتحصيل</button>
       {(showForm || form.id) && <Modal
         title={`${form.id ? t("edit") : t("create")} ${t("sales")}`}
         onClose={() => {
           setForm(blankSale());
           setShowForm(false);
+          navigate('/sales?kind=product');
         }}
       >
       <form
@@ -1783,12 +1794,16 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
         onSubmit={(e) => {
           e.preventDefault();
           run(async () => {
+            setSaleError('');setSaleSaving(true);
+            try{
             const payload = {
               product_id: Number(form.product_id),
               units_sold: Number(form.units_sold),
               unit_sell_price_egp: Number(form.unit_sell_price_egp),
               manufacturing_cost_per_unit: Number(form.manufacturing_cost_per_unit),
               sold_at: form.sold_at || undefined,
+              customer_name:form.customer_name||'',customer_phone:form.customer_phone||'',invoice_revision:form.invoice_revision??0,
+              ...paymentPayload(form,total),
             };
             if (form.id) {
               await api.put(`/sales-records/${form.id}`, payload);
@@ -1797,21 +1812,25 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
             }
             setForm(blankSale());
             setShowForm(false);
-            await refreshAll();
+            navigate('/sales?kind=product');
+            }catch(error){setSaleError(error.message);throw error;}finally{setSaleSaving(false);}
           });
         }}
       >
-        <select value={form.product_id} onChange={(e) => setForm((s) => ({ ...s, product_id: e.target.value }))}>
+        {saleError&&<div className="error" role="alert">{saleError}</div>}
+        <label>المنتج<select required value={form.product_id} onChange={(e) => setForm((s) => ({ ...s, product_id: e.target.value }))}>
           <option value="">{t("product")}</option>
           {products.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name} — متاح {p.finished_stock_qty||0}
             </option>
           ))}
-        </select>
+        </select></label>
         <input
           type="number"
           min="1"
+          required
+          step="1"
           placeholder={t("unitsSold")}
           value={form.units_sold}
           onChange={(e) => setForm((s) => ({ ...s, units_sold: e.target.value }))}
@@ -1821,6 +1840,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           min="0"
           step="0.01"
           placeholder={t("unitSellPrice")}
+          required
           value={form.unit_sell_price_egp}
           onChange={(e) => setForm((s) => ({ ...s, unit_sell_price_egp: e.target.value }))}
         />
@@ -1829,87 +1849,25 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           min="0"
           step="0.01"
           placeholder={t("manufacturingCostPerUnit")}
+          required
           value={form.manufacturing_cost_per_unit}
           onChange={(e) => setForm((s) => ({ ...s, manufacturing_cost_per_unit: e.target.value }))}
         />
         <input
           type="datetime-local"
+          required
+          step="1"
           value={form.sold_at}
           onChange={(e) => setForm((s) => ({ ...s, sold_at: e.target.value }))}
         />
-        <button type="submit">{form.id ? t("update") : t("create")}</button>
+        <label>اسم العميل {form.payment_mode&&form.payment_mode!=='paid'?'(مطلوب للمبلغ المتبقي)':'(اختياري)'}<input required={form.payment_mode&&form.payment_mode!=='paid'} value={form.customer_name||''} onChange={e=>change('customer_name',e.target.value)}/></label>
+        <label>الهاتف (اختياري)<input type="tel" value={form.customer_phone||''} onChange={e=>change('customer_phone',e.target.value)}/></label>
+        {!form.id&&<PaymentFields form={form} change={change} total={total}/>}
+        <InvoiceChecks form={form} total={total} originalTotal={form.original_total??form.revenue_egp}/>
+        <div className="printerInvoiceTotal">إجمالي الفاتورة: <strong>{total.toLocaleString('ar-EG')} جنيه</strong></div>
+        <button type="submit" className="primaryButton printerInvoiceSave" disabled={saleSaving}>{saleSaving?'جارٍ الحفظ…':form.id ? t("update") : t("create")}</button>
       </form>
       </Modal>}
-      <DataTable
-        columns={[
-          t("product"),
-          t("unitsSold"),
-          t("unitSellPrice"),
-          t("manufacturingCostPerUnit"),
-          t("purchaseCost"),
-          t("revenue"),
-          t("grossProfit"),
-          t("margin"),
-          t("manufacturingPaid"),
-          t("actions"),
-        ]}
-        secondaryColumns={[3,4,7]}
-        rows={unpaidOnly ? records.filter(row=>!row.is_accounted) : records}
-        emptyText={t("noData")}
-        renderRow={(r) => (
-          <>
-            <td>{r.product_name}</td>
-            <td>{r.units_sold}</td>
-            <td>{r.unit_sell_price_egp}</td>
-            <td>{r.manufacturing_cost_per_unit ?? 1000}</td>
-            <td>{r.total_purchase_cost_egp}</td>
-            <td>{r.revenue_egp}</td>
-            <td>{r.gross_profit_egp}</td>
-            <td>{r.margin_pct}</td>
-            <td>
-              <input
-                type="checkbox"
-                className="accountedCheckbox"
-                checked={Boolean(r.is_accounted)}
-                aria-label={t("manufacturingPaid")}
-                onChange={(event) =>
-                  run(async () => {
-                    await api.put(`/sales-records/${r.id}`, { is_accounted: event.target.checked });
-                    await refreshAll();
-                  })
-                }
-              />
-            </td>
-            <td>
-              <button
-                onClick={() =>
-                  setForm({
-                    id: r.id,
-                    product_id: String(r.product_id),
-                    units_sold: r.units_sold,
-                    unit_sell_price_egp: r.unit_sell_price_egp,
-                    manufacturing_cost_per_unit: r.manufacturing_cost_per_unit ?? 1000,
-                    sold_at: toLocalDateTimeValue(r.sold_at),
-                  })
-                }
-              >
-                {t("edit")}
-              </button>
-              <button
-                className="danger"
-                onClick={() =>
-                  run(async () => {
-                    await api.delete(`/sales-records/${r.id}`);
-                    await refreshAll();
-                  })
-                }
-              >
-                {t("delete")}
-              </button>
-            </td>
-          </>
-        )}
-      />
     </section>
   );
 }
@@ -1946,6 +1904,9 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
   useCreateIntent(()=>{setRequestForm(blankMaintenanceTicket());setShowRequest(true);});
   const [selectedTicketId, setSelectedTicketId] = useState(null);
   const [editingTicket, setEditingTicket] = useState(null);
+  const maintenanceLocation=useLocation();
+  const maintenanceEdit=new URLSearchParams(maintenanceLocation.split('?')[1]||'').get('edit');
+  useEffect(()=>{if(!maintenanceEdit)return;const ticket=tickets.find(r=>String(r.id)===maintenanceEdit);if(ticket){setEditingTicket({...ticket});navigate('/maintenance/completed');}},[maintenanceEdit,tickets]);
   const [invoiceTicket, setInvoiceTicket] = useState(null);
   const [partForm, setPartForm] = useState({ component_id: "", qty_used: 1 });
   const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) || null;
@@ -2008,13 +1969,14 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
                 <button type="button" onClick={() => setSelectedTicketId(ticket.id)}>{t("view")}</button>
                 <button type="button" onClick={() => setEditingTicket({ ...ticket })}>{t("edit")}</button>
                 <button type="button" className="pdfButton" title={t("downloadInvoice")} onClick={() => setInvoiceTicket(ticket)}>📄 PDF</button>
-                <button type="button" className="danger" onClick={() => {
+                {ticket.status!=='completed'&&<button type="button" className="danger" onClick={() => {
                   if (!window.confirm(t("confirmDeleteTicket"))) return;
                   run(async () => {
                     await api.delete(`/maintenance-tickets/${ticket.id}`);
                     await refreshAll();
                   });
-                }}>{t("delete")}</button>
+                }}>{t("delete")}</button>}
+                {ticket.status==='completed'&&<button type="button" onClick={()=>navigate(`/sales?kind=maintenance&q=R-${ticket.id}`)}>التحصيل وإدارة الفاتورة</button>}
                 {ticket.status === "completed" && (
                   <label className="checkboxLabel">
                     <input
@@ -2022,7 +1984,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
                       className="accountedCheckbox"
                       checked={Boolean(ticket.delivered)}
                       onChange={(event) => run(async () => {
-                        await api.put(`/maintenance-tickets/${ticket.id}`, { delivered: event.target.checked });
+                        await api.put(`/maintenance-tickets/${ticket.id}`, { delivered: event.target.checked,invoice_revision:ticket.invoice_revision??0 });
                         await refreshAll();
                       })}
                     />
@@ -2067,6 +2029,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
                 device_issue: editingTicket.device_issue,
                 maintenance_description: editingTicket.maintenance_description,
                 repair_charge_egp: Number(editingTicket.repair_charge_egp || 0),
+                invoice_revision:editingTicket.invoice_revision??0,
               });
               setEditingTicket(null);
               await refreshAll();
@@ -2358,6 +2321,9 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
       {reportData && (
         <>
           <h3>{t("reportSummary")}</h3>
+          <p className="salesNotice">الإجماليات التالية تخص الفواتير المؤرخة داخل الفترة؛ المحصّل هو مجموع دفعات هذه الفواتير، وليس كشف حركة الخزنة خلال الفترة. إيراد الصيانة التفصيلي أدناه يخص المسلّم فقط.</p>
+          <div className="metrics"><Metric label="صافي كل المبيعات" value={reportData.summary.unified_sales_egp}/><Metric label="المحصّل المسجّل" value={reportData.summary.recorded_collections_egp}/><Metric label="المستحق على العملاء" value={reportData.summary.customer_due_egp}/><Metric label="واجب رده للعملاء" value={reportData.summary.refund_due_egp}/><Metric label="فواتير تحصيلها غير مُراجع" value={reportData.summary.unreviewed_invoices}/></div>
+          <p className="salesNotice">أرباح المنتجات تقديرية للفواتير التي بها تكلفة غير مكتملة أو لم تُراجع تكلفتها سابقًا: {reportData.summary.incomplete_cost_invoices||0} فاتورة. تكلفة غير مسجّلة لا تعني أن القطعة مجانية.</p>
           <div className="metrics">
             <Metric label={t("revenue")} value={reportData.summary.revenue_egp} />
             <Metric label={t("purchaseCost")} value={reportData.summary.purchase_cost_egp} />
@@ -2564,6 +2530,7 @@ function DataTable({ columns, rows, renderRow, emptyText, secondaryColumns=[], s
     }return true;
   });
   const pages=Math.max(1,Math.ceil(filtered.length/20)),current=Math.min(page,pages);
+  useEffect(()=>setPage(1),[location]);
   const update=(key,value)=>{const next=new URL(window.location.href);value?next.searchParams.set(key,value):next.searchParams.delete(key);navigate(next.pathname+next.search);setPage(1);};
   useEffect(()=>{if(!searchable)return;const params=new URLSearchParams(location.split('?')[1]||'');setQ(params.get('q')||'');setFrom(params.get('from')||'');setTo(params.get('to')||'');setPage(1);},[location,searchable]);
   const visible=columns.map((_,i)=>i).filter(i=>!secondaryColumns.includes(i));

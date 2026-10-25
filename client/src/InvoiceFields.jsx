@@ -1,0 +1,11 @@
+import {DateTime} from 'luxon';
+export function PaymentFields({form,change,total}){
+ return <fieldset className="printerExtras"><legend>تحصيل الفاتورة</legend><div className="gridForm"><label>حالة الدفع<select value={form.payment_mode||'paid'} onChange={e=>change('payment_mode',e.target.value)}><option value="paid">مدفوعة بالكامل</option><option value="partial">دفعة جزئية</option><option value="unpaid">لم يتم الدفع</option></select></label>{form.payment_mode==='partial'&&<label>المدفوع<input required type="number" min="0.01" max={Math.max(0,total-0.01)} step="0.01" value={form.payment_amount??''} onChange={e=>change('payment_amount',e.target.value)}/></label>}<label>طريقة الدفع<select value={form.payment_method||'cash'} onChange={e=>change('payment_method',e.target.value)}><option value="cash">نقدي</option><option value="transfer">تحويل</option><option value="card">بطاقة</option><option value="other">أخرى</option></select></label><p className="salesNotice">المتبقي: {Math.max(0,total-(form.payment_mode==='unpaid'?0:form.payment_mode==='partial'?Number(form.payment_amount||0):total)).toLocaleString('ar-EG')} جنيه</p></div></fieldset>;
+}
+export function paymentPayload(form,total){return form.id?{}:{payment_amount:form.payment_mode==='unpaid'?0:form.payment_mode==='partial'?form.payment_amount:total,payment_method:form.payment_method||'cash',paid_at:new Date().toISOString()};}
+export function InvoiceChecks({form,total,originalTotal}){
+ const future=DateTime.fromISO(form.sold_at||'',{zone:'Africa/Cairo'}).toMillis()>Date.now()+60000;
+ const unusual=originalTotal>0&&Math.abs(total-originalTotal)/originalTotal>0.3;
+ const zero=total===0;
+ return <>{form.id&&<div className="salesNotice">تعديل الفاتورة #{form.id} • الإجمالي السابق: {Number(originalTotal||0).toLocaleString('ar-EG')} جنيه ← الجديد: {Number(total||0).toLocaleString('ar-EG')} جنيه. تغيير الإجمالي يحدّث رصيد العميل، والدفعات السابقة تظل مسجّلة.</div>}{(future||unusual||zero)&&<label className="salesNotice" key={`${form.sold_at}-${total}`}><input type="checkbox" required/> راجعت {zero?'أن إجمالي الفاتورة صفر. ':''}{future?'أن تاريخ البيع في المستقبل. ':''}{unusual?'التغيير الكبير في قيمة الفاتورة.':''}</label>}</>;
+}
