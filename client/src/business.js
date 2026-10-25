@@ -1,11 +1,11 @@
 import { DateTime } from "luxon";
 import {createInvoiceLedger} from './invoiceLedger.js';
-import {accountingProduct,filterInvoices,salesTotals} from './salesModel.js';
+import {accountingProduct,accountingSpare,filterInvoices,salesTotals} from './salesModel.js';
 
 // Each operation owns its database connection and helper scope.
 export function createBusiness(databaseRequest, context={}) {
 const readCache = new Map();
-const invoices=createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,insertLedger,actor:context.actor,nowIso,toUtcIsoFromInput});
+const invoices=createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,updateComponentStock,insertLedger,actor:context.actor,nowIso,toUtcIsoFromInput});
 
 const DATA_API_URL = import.meta.env.VITE_DATA_API_URL || "/api/data";
 
@@ -79,6 +79,29 @@ function toNonNegativeNumber(value, fieldName) {
 function round2(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
+function repairType(value,allowLegacy=false){
+  if(value==null&&allowLegacy)return null;
+  if(!['printer','device'].includes(value))throw new Error('اختر صيانة طابعة أو صيانة جهاز');
+  return value;
+}
+async function sparePayload(body,current={}){
+  const values={...current,...body};
+  if(!Array.isArray(values.items)||!values.items.length||values.items.length>50)throw new Error('أضف من قطعة واحدة إلى 50 قطعة مختلفة');
+  const seen=new Set(),items=[];
+  for(const item of values.items){
+    if(!item||typeof item!=='object')throw new Error('بيانات قطعة الغيار غير صالحة');
+    const componentId=toPositiveInt(item.component_id,'component_id'),quantity=toPositiveInt(item.quantity,'quantity');
+    if(seen.has(componentId))throw new Error('القطعة مكررة؛ عدّل الكمية في نفس السطر');seen.add(componentId);
+    const component=await getComponentById(componentId);if(!component)throw new Error('قطعة الغيار غير موجودة بالمخزون');
+    if(component.stock_qty<quantity)throw new Error(`المخزون غير كافٍ للقطعة ${component.item_name}. المتاح: ${component.stock_qty}`);
+    const previous=current.items?.find(line=>line.component_id===componentId),price=await getLatestPriceForComponent(componentId);
+    items.push({component_id:componentId,item_name:component.item_name,quantity,unit_price:toNonNegativeNumber(item.unit_price,'unit_price'),unit_cost_egp:previous?previous.unit_cost_egp:Number(price?.price_egp||0),cost_complete:previous?Boolean(previous.cost_complete):Boolean(price)});
+  }
+  const total=round2(items.reduce((sum,i)=>sum+round2(i.quantity*i.unit_price),0));
+  if(!Number.isFinite(total)||total>999999999999)throw new Error('إجمالي الفاتورة أكبر من الحد المسموح');
+  return {items,total_amount:total,customer_name:values.customer_name?String(values.customer_name).trim()||null:null,customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),updated_at:nowIso()};
+}
+async function applySpareSale(row){for(const item of row.items){await updateComponentStock(item.component_id,-item.quantity);await insertLedger({itemType:'component',itemId:item.component_id,deltaQty:-item.quantity,reason:'sale',referenceType:'spare_sale',referenceId:row.id});}}
 
 function printerInvoicePayload(body,current={}) {
   const values={...current,...body};
@@ -450,7 +473,7 @@ function buildCsv(report) {
     ),
     "",
     ["summary", "", "", "", "", ""].join(","),
-    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','refund_due_egp','unreviewed_invoices','incomplete_cost_invoices'].map(key=>[key,report.summary[key]].join(',')),
+    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','refund_due_egp','unreviewed_invoices','incomplete_cost_invoices','spare_revenue_egp','spare_cost_egp','spare_profit_egp','spare_incomplete_cost_invoices'].map(key=>[key,report.summary[key]].join(',')),
     ["revenue_egp", report.summary.revenue_egp].join(","),
     ["purchase_cost_egp", report.summary.purchase_cost_egp].join(","),
     ["gross_profit_egp", report.summary.gross_profit_egp].join(","),
@@ -623,6 +646,8 @@ async function buildSalesReport(period, query) {
   const allInvoices=await invoices.list();
   const rows=allInvoices.filter(r=>r.kind==='product').map(accountingProduct),products=await getProductsRaw();
   const unified=salesTotals(filterInvoices(allInvoices,{from:start.toISODate(),to:end.toISODate()}));
+  const spareInvoices=filterInvoices(allInvoices,{kind:'spare',from:start.toISODate(),to:end.toISODate()}),spareMetrics=spareInvoices.map(accountingSpare);
+  const spareRevenue=round2(spareMetrics.reduce((s,r)=>s+r.revenue,0)),spareCost=round2(spareMetrics.reduce((s,r)=>s+r.cost,0)),spareProfit=round2(spareRevenue-spareCost);
   const productMap = new Map(products.map((row) => [row.id, row]));
   const filtered = [];
   for (const row of rows) {
@@ -683,6 +708,7 @@ async function buildSalesReport(period, query) {
     summary: {
       unified_sales_egp:unified.sales,recorded_collections_egp:unified.collected,customer_due_egp:unified.due,refund_due_egp:unified.refund,unreviewed_invoices:unified.unknown,
       incomplete_cost_invoices:filtered.filter(r=>r.cost_complete!==true&&r.units_sold>0).length,
+      spare_revenue_egp:spareRevenue,spare_cost_egp:spareCost,spare_profit_egp:spareProfit,spare_incomplete_cost_invoices:spareMetrics.filter(m=>!m.complete).length,
       revenue_egp: round2(totalRevenue),
       purchase_cost_egp: round2(totalPurchaseCost),
       gross_profit_egp: round2(totalGrossProfit),
@@ -693,7 +719,7 @@ async function buildSalesReport(period, query) {
       maintenance_revenue_egp: round2(maintenanceRevenue),
       maintenance_parts_cost_egp: round2(maintenancePartsCost),
       maintenance_profit_egp: round2(maintenanceProfit),
-      total_profit_with_maintenance_egp: round2(totalGrossProfit + maintenanceProfit),
+      total_profit_with_maintenance_egp: round2(totalGrossProfit + spareProfit + maintenanceProfit),
       delivered_maintenance_count: maintenanceTickets.length,
       avg_margin_pct: totalRevenue === 0 ? 0 : round2((totalGrossProfit / totalRevenue) * 100),
     },
@@ -752,7 +778,7 @@ async function getMaintenanceTickets() {
 
 async function handleGet(pathname, query) {
   if(pathname==='/sales-hub')return invoices.list();
-  if(/^\/sales-hub\/(product|printer|maintenance)\/\d+$/.test(pathname)){
+  if(/^\/sales-hub\/(product|printer|spare|maintenance)\/\d+$/.test(pathname)){
     const [, ,kind,id]=pathname.split('/');const row=await invoices.get(kind,Number(id));
     return {...row,events:row.meta?await selectRows('sales_events',{eq:[['invoice_id',row.meta.id]],order:[['id',false]]}):[]};
   }
@@ -811,6 +837,7 @@ async function handleGet(pathname, query) {
     return rows.map((row) => ({ ...row, product_name: productMap.get(row.product_id)?.name || "",invoice_revision:metas.find(m=>m.kind==='product'&&m.source_id===row.id)?.revision||0 }));
   }
   if (pathname === '/printer-sales') {const [rows,metas]=await Promise.all([selectRows('printer_sales',{order:[['sold_at',false]]}),selectRows('sales_invoice_meta')]);return rows.map(row=>({...row,invoice_revision:metas.find(m=>m.kind==='printer'&&m.source_id===row.id)?.revision||0}));}
+  if (pathname === '/spare-sales') {const [rows,metas]=await Promise.all([selectRows('spare_sales',{order:[['sold_at',false]]}),selectRows('sales_invoice_meta')]);return rows.map(row=>({...row,invoice_revision:metas.find(m=>m.kind==='spare'&&m.source_id===row.id)?.revision||0}));}
   if (pathname === '/accounts') return (await authRequest('list')).users;
   if (pathname === "/damage-records") {
     const [rows, components] = await Promise.all([
@@ -869,6 +896,7 @@ async function handleGet(pathname, query) {
 }
 
 async function handlePost(pathname, body) {
+  if(pathname==='/spare-sales'){const row=await insertRow('spare_sales',await sparePayload(body));await applySpareSale(row);return row;}
   if (pathname === "/auth/login") {
     const result = await authRequest('login',body);
     setAuthState(true);
@@ -908,6 +936,7 @@ async function handlePost(pathname, body) {
   if (pathname === "/maintenance-tickets") {
     const now = nowIso();
     return insertRow("maintenance_tickets", {
+      device_type:repairType(body.device_type),
       customer_name: requireName(body.customer_name, "customer_name"),
       phone: body.phone ? String(body.phone).trim() : null,
       device_issue: requireName(body.device_issue, "device_issue"),
@@ -1109,6 +1138,12 @@ async function handlePost(pathname, body) {
 }
 
 async function handlePut(pathname, body) {
+  if(/^\/spare-sales\/\d+$/.test(pathname)){
+    const id=toPositiveInt(pathname.split('/')[2],'id'),current=await selectSingle('spare_sales',{eq:[['id',id]]});
+    if(!current)throw new Error('الفاتورة غير موجودة');
+    await reverseLedgerForReference('spare_sale',id);
+    const payload=await sparePayload(body,current),row=(await updateRows('spare_sales',payload,[['id',id]]))[0];await applySpareSale(row);return row;
+  }
   if (/^\/printer-sales\/\d+$/.test(pathname)) {
     const invoiceId=toPositiveInt(pathname.split('/')[2],'invoice_id');
     const current=await selectSingle('printer_sales',{eq:[['id',invoiceId]]});
@@ -1148,6 +1183,7 @@ async function handlePut(pathname, body) {
     const delivered = body.delivered !== undefined ? Boolean(body.delivered) : Boolean(current.delivered);
     if (delivered && nextStatus !== "completed") throw new Error("Complete the maintenance ticket before delivery");
     const updated = (await updateRows("maintenance_tickets", {
+      device_type:body.device_type!==undefined?repairType(body.device_type,current.device_type==null):current.device_type,
       customer_name: body.customer_name !== undefined ? requireName(body.customer_name, "customer_name") : current.customer_name,
       phone: body.phone !== undefined ? (body.phone ? String(body.phone).trim() : null) : current.phone,
       device_issue: body.device_issue !== undefined ? requireName(body.device_issue, "device_issue") : current.device_issue,
@@ -1408,6 +1444,7 @@ async function handleDelete(pathname) {
     if ((await selectRows("bom_items", { eq: [["component_id", componentId]] })).length > 0) throw new Error("Component is used by one or more product BOMs");
     if ((await selectRows("damage_records", { eq: [["component_id", componentId]] })).length > 0) throw new Error("Cannot delete component with damage history");
     if ((await selectRows("component_intake_records", { eq: [["component_id", componentId]] })).length > 0) throw new Error("Cannot delete component with intake history");
+    if((await selectRows('spare_sales')).some(s=>s.items.some(i=>i.component_id===componentId)))throw new Error('لا يمكن حذف قطعة لها فواتير بيع محفوظة');
     await deleteRows("components", [["id", componentId]]);
     return { success: true };
   }
@@ -1456,13 +1493,13 @@ async function request(path, options = {}) {
   const body = options.body ? JSON.parse(options.body) : {};
   const { pathname, query } = parsePath(path);
   if (pathname.startsWith('/auth/') || pathname.startsWith('/accounts')) throw withStatus(404, 'Route not found');
-  if(method==='POST'&&/^\/sales-hub\/(product|printer|maintenance)\/\d+\/(review|payment|return|cancel)$/.test(pathname)){
+  if(method==='POST'&&/^\/sales-hub\/(product|printer|spare|maintenance)\/\d+\/(review|payment|return|cancel)$/.test(pathname)){
     const [,,kind,id,action]=pathname.split('/');return invoices.mutate(kind,Number(id),action,body);
   }
-  const match=pathname.match(/^\/(sales-records|printer-sales|maintenance-tickets)(?:\/(\d+))?$/);
+  const match=pathname.match(/^\/(sales-records|printer-sales|spare-sales|maintenance-tickets)(?:\/(\d+))?$/);
   // Production operations always supply the authenticated actor. Read helpers can run independently.
   if(context.actor&&match&&method!=='GET'){
-    const kind={'sales-records':'product','printer-sales':'printer','maintenance-tickets':'maintenance'}[match[1]],id=Number(match[2]);
+    const kind={'sales-records':'product','printer-sales':'printer','spare-sales':'spare','maintenance-tickets':'maintenance'}[match[1]],id=Number(match[2]);
     const current=id?await selectSingle(invoices.sourceTables[kind],{eq:[['id',id]]}):null;
     const finalized=kind!=='maintenance'||current?.status==='completed';
     if(method==='DELETE'&&finalized)throw new Error('استخدم إلغاء الفاتورة من المبيعات مع تسجيل السبب بدل الحذف');

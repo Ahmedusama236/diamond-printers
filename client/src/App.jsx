@@ -5,6 +5,8 @@ import { navigate, paths, tabForLocation, useLocation, useStage } from './naviga
 import { PrintersPage, AccountsPage } from './NewPages';
 import { Overview } from './Overview';
 import {SalesHub} from './SalesHub';
+import {SpareSales} from './SpareSales';
+import {repairTypes} from './salesModel';
 import {PaymentFields,InvoiceChecks,paymentPayload} from './InvoiceFields';
 import { WorkspaceNavigation, PageIntro } from './Workspace';
 import {DateTime} from 'luxon';
@@ -19,6 +21,7 @@ const TABS = [
   "manufacturing",
   "sales",
   "productSales",
+  "spareSales",
   "damaged",
   "maintenance",
   "shortage",
@@ -80,6 +83,7 @@ function blankDamage() {
 
 function blankMaintenanceTicket() {
   return {
+    device_type:'printer',
     customer_name: "",
     phone: "",
     device_issue: "",
@@ -1128,6 +1132,7 @@ function App() {
         )}
 
         {activeTab === 'sales' && <SalesHub api={api} Modal={Modal} DataTable={DataTable}/>}
+        {activeTab === 'spareSales' && <SpareSales api={api} Modal={Modal}/>}
         {activeTab === "productSales" && (
           <SalesTab
             t={t}
@@ -1772,7 +1777,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
   return (
     <section className="salesSection">
       <SectionHeader
-        title="بيع منتج مصنّع"
+        title="بيع جهاز"
         actionLabel={`＋ ${t("create")}`}
         onAction={() => {
           setForm(blankSale());
@@ -1883,6 +1888,7 @@ function MaintenanceInvoice({ ticket, t }) {
       </header>
       <div className="invoiceBody">
         <InvoiceRow label={t("customerName")} value={ticket.customer_name} />
+        <InvoiceRow label="نوع الصيانة" value={repairTypes[ticket.device_type]||'غير محدد — طلب سابق'} />
         {ticket.phone && <InvoiceRow label={t("phone")} value={ticket.phone} />}
         <InvoiceRow label={t("deviceIssue")} value={ticket.device_issue} />
         <InvoiceRow label={t("maintenanceDescription")} value={ticket.maintenance_description || "-"} />
@@ -1895,6 +1901,9 @@ function MaintenanceInvoice({ ticket, t }) {
 
 function InvoiceRow({ label, value }) {
   return <div className="invoiceRow"><span>{label}</span><strong>{value}</strong></div>;
+}
+function RepairTypeChoice({value,onChange}){
+  return <fieldset className="repairTypeChoice"><legend>نوع طلب الصيانة</legend>{Object.entries(repairTypes).map(([key,label])=><label key={key} className={value===key?'selected':''}><input type="radio" name="repair-device-type" required value={key} checked={value===key} onChange={()=>onChange(key)}/><strong>{label}</strong></label>)}{!value&&<small>طلب سابق؛ اختار نوع الصيانة عند التعديل.</small>}</fieldset>;
 }
 
 function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
@@ -1909,8 +1918,10 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
   useEffect(()=>{if(!maintenanceEdit)return;const ticket=tickets.find(r=>String(r.id)===maintenanceEdit);if(ticket){setEditingTicket({...ticket});navigate('/maintenance/completed');}},[maintenanceEdit,tickets]);
   const [invoiceTicket, setInvoiceTicket] = useState(null);
   const [partForm, setPartForm] = useState({ component_id: "", qty_used: 1 });
+  const [repairFilter,setRepairFilter]=useState('');
   const selectedTicket = tickets.find((ticket) => ticket.id === selectedTicketId) || null;
-  const visibleTickets = tickets.filter((ticket) =>
+  const typedTickets=tickets.filter((ticket) => !repairFilter||(repairFilter==='unknown'?!ticket.device_type:ticket.device_type===repairFilter));
+  const visibleTickets = typedTickets.filter((ticket) =>
     activeStage === "completed" ? ticket.status === "completed" : ticket.status === "in_progress"
   );
 
@@ -1934,14 +1945,14 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
           className={activeStage === "in_progress" ? "active" : ""}
           onClick={() => setActiveStage("in_progress")}
         >
-          {t("underMaintenance")} ({tickets.filter((ticket) => ticket.status === "in_progress").length})
+          {t("underMaintenance")} ({typedTickets.filter((ticket) => ticket.status === "in_progress").length})
         </button>
         <button
           type="button"
           className={activeStage === "completed" ? "active" : ""}
           onClick={() => setActiveStage("completed")}
         >
-          {t("maintenanceCompleted")} ({tickets.filter((ticket) => ticket.status === "completed").length})
+          {t("maintenanceCompleted")} ({typedTickets.filter((ticket) => ticket.status === "completed").length})
         </button>
       </div>
 
@@ -1953,6 +1964,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
         </div>
       )}
 
+      {activeStage !== 'request'&&<label className="repairFilter">نوع الصيانة<select value={repairFilter} onChange={e=>setRepairFilter(e.target.value)}><option value="">كل الطلبات</option><option value="printer">صيانة طابعة</option><option value="device">صيانة جهاز</option><option value="unknown">طلبات سابقة غير محددة</option></select></label>}
       {activeStage !== "request" && (
         <DataTable
           columns={[t("customerName"), t("phone"), t("deviceIssue"), t("repairCharge"), t("partsCost"), t("actions")]}
@@ -1960,7 +1972,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
           emptyText={t("noData")}
           renderRow={(ticket) => (
             <>
-              <td>{ticket.customer_name}</td>
+              <td>{ticket.customer_name}<small className="invoiceKind">{repairTypes[ticket.device_type]||'نوع غير محدد — طلب سابق'}</small></td>
               <td>{ticket.phone}</td>
               <td>{ticket.device_issue}</td>
               <td>{ticket.repair_charge_egp} EGP</td>
@@ -2009,6 +2021,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
               await refreshAll();
             });
           }}>
+            <RepairTypeChoice value={requestForm.device_type} onChange={value=>setRequestForm(s=>({...s,device_type:value}))}/>
             <input placeholder={t("customerName")} value={requestForm.customer_name} onChange={(event) => setRequestForm((state) => ({ ...state, customer_name: event.target.value }))} required />
             <input placeholder={t("phoneOptional")} value={requestForm.phone} onChange={(event) => setRequestForm((state) => ({ ...state, phone: event.target.value }))} />
             <textarea placeholder={t("deviceIssue")} value={requestForm.device_issue} onChange={(event) => setRequestForm((state) => ({ ...state, device_issue: event.target.value }))} required />
@@ -2025,6 +2038,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
             run(async () => {
               await api.put(`/maintenance-tickets/${editingTicket.id}`, {
                 customer_name: editingTicket.customer_name,
+                device_type:editingTicket.device_type,
                 phone: editingTicket.phone,
                 device_issue: editingTicket.device_issue,
                 maintenance_description: editingTicket.maintenance_description,
@@ -2035,6 +2049,7 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
               await refreshAll();
             });
           }}>
+            <RepairTypeChoice value={editingTicket.device_type} onChange={value=>setEditingTicket(s=>({...s,device_type:value}))}/>
             <input placeholder={t("customerName")} value={editingTicket.customer_name} onChange={(event) => setEditingTicket((state) => ({ ...state, customer_name: event.target.value }))} required />
             <input placeholder={t("phoneOptional")} value={editingTicket.phone || ""} onChange={(event) => setEditingTicket((state) => ({ ...state, phone: event.target.value }))} />
             <textarea placeholder={t("deviceIssue")} value={editingTicket.device_issue} onChange={(event) => setEditingTicket((state) => ({ ...state, device_issue: event.target.value }))} required />
@@ -2062,7 +2077,8 @@ function MaintenanceTab({ t, components, tickets, run, api, refreshAll }) {
         <Modal title={`${t("maintenanceTicket")} #${selectedTicket.id}`} onClose={() => setSelectedTicketId(null)} wide>
           <div className="ticketDetails">
             <div><span>{t("customerName")}</span><strong>{selectedTicket.customer_name}</strong></div>
-            <div><span>{t("phone")}</span><strong>{selectedTicket.phone}</strong></div>
+            <div><span>{t("phone")}</span><strong>{selectedTicket.phone||'—'}</strong></div>
+            <div><span>نوع الصيانة</span><strong>{repairTypes[selectedTicket.device_type]||'غير محدد — طلب سابق'}</strong></div>
             <div className="ticketIssue"><span>{t("deviceIssue")}</span><strong>{selectedTicket.device_issue}</strong></div>
           </div>
           <DataTable
@@ -2335,7 +2351,11 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
             <Metric label={t("maintenanceRevenue")} value={reportData.summary.maintenance_revenue_egp} />
             <Metric label={t("maintenancePartsCost")} value={reportData.summary.maintenance_parts_cost_egp} />
             <Metric label={t("maintenanceProfit")} value={reportData.summary.maintenance_profit_egp} />
-            <Metric label={t("totalProfitWithMaintenance")} value={reportData.summary.total_profit_with_maintenance_egp} />
+            <Metric label="إيراد قطع الغيار" value={reportData.summary.spare_revenue_egp}/>
+            <Metric label="تكلفة قطع الغيار المباعة" value={reportData.summary.spare_cost_egp}/>
+            <Metric label="ربح قطع الغيار" value={reportData.summary.spare_profit_egp}/>
+            <Metric label="فواتير قطع غيار بتكلفة غير مكتملة" value={reportData.summary.spare_incomplete_cost_invoices}/>
+            <Metric label="إجمالي ربح الأجهزة وقطع الغيار والصيانة" value={reportData.summary.total_profit_with_maintenance_egp} />
             <Metric label={t("deliveredMaintenanceCount")} value={reportData.summary.delivered_maintenance_count} />
             <Metric label={t("margin")} value={reportData.summary.avg_margin_pct} />
           </div>

@@ -17,7 +17,7 @@ export function WorkspaceNavigation({activeTab,language,shortageCount=0}) {
  const [mobile,setMobile]=useState(()=>window.matchMedia('(max-width:800px)').matches);
  useEffect(()=>{const query=window.matchMedia('(max-width:800px)');const update=()=>setMobile(query.matches);query.addEventListener('change',update);return()=>query.removeEventListener('change',update);},[]);
  const ar=language==='ar';
- if(['printers','productSales'].includes(activeTab))activeTab='sales';
+ if(['printers','productSales','spareSales'].includes(activeTab))activeTab='sales';
  useEffect(()=>{setOpen(false);},[activeTab]);
  useEffect(()=>{if(!open)return;const close=e=>{if(e.key==='Escape')setOpen(false);};document.addEventListener('keydown',close);return()=>document.removeEventListener('keydown',close);},[open]);
  const navItem=([key,arabic,english,icon])=><a key={key} href={paths[key]} title={ar?arabic:english} aria-current={(activeTab===key||(key==='components'&&activeTab==='inventory'))?'page':undefined} className={'workspaceLink '+((activeTab===key||(key==='components'&&activeTab==='inventory'))?'selected':'')} onClick={e=>{if(e.button===0&&!e.ctrlKey&&!e.metaKey&&!e.shiftKey){e.preventDefault();navigate(paths[key]);setOpen(false);}}}><Icon name={icon}/><span>{ar?arabic:english}</span>{key==='shortage'&&shortageCount>0&&<b>{shortageCount}</b>}</a>;
@@ -34,7 +34,7 @@ export function WorkspaceNavigation({activeTab,language,shortageCount=0}) {
  </>;
 }
 export function PageIntro({activeTab,language,user}) {
- if(['printers','productSales'].includes(activeTab))activeTab='sales';
+ if(['printers','productSales','spareSales'].includes(activeTab))activeTab='sales';
  const item=groups.flatMap(g=>g.items).find(i=>i[0]===activeTab || (activeTab==='inventory'&&i[0]==='components'));
  const ar=language==='ar';
  return <div className="pageIntro"><div><p>{ar?'مساحة العمل / ':'Workspace / '}{item?.[ar?1:2]}</p><h1>{activeTab==='dashboard'?(ar?'كل أعمالك، في نظرة واحدة':'Your business at a glance'):item?.[ar?1:2]}</h1></div><div className="userPill"><span>{String(user?.username||'D').slice(0,1).toUpperCase()}</span><div><strong>{user?.username}</strong><small>{user?.role==='admin'?(ar?'مدير النظام':'Administrator'):(ar?'عضو الفريق':'Team member')}</small></div></div></div>;

@@ -129,6 +129,8 @@ test('database adapter binds filter and update values correctly and rejects acco
  const extra_items=[{item_name:'Paper',quantity:2,unit_price:150}];
  await db({action:'insert',table:'printer_sales',payload:{item_name:'Printer',extra_items}});
  assert.equal(params[1],JSON.stringify(extra_items));assert.match(sql,/ON CONFLICT\(request_id\)/);
+ await db({action:'insert',table:'spare_sales',payload:{items:[{component_id:1,quantity:2,unit_price:50}]}});
+ assert.equal(params[0],JSON.stringify([{component_id:1,quantity:2,unit_price:50}]));
 });
 test('dashboard periods respect Cairo, delivered repairs, revenue vs profit and all-time dues',()=>{
  const {DateTime}=require('../client/node_modules/luxon');const {dashboardModel}=dashboard();

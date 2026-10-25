@@ -90,3 +90,50 @@ test('historical collections must be reviewed before financial corrections, and 
  const row=await db.request('/sales-hub/printer/1/cancel','POST',{revision:1,reason:'Cancelled'});assert.equal(row.balance,-5000);
  await assert.rejects(db.request('/printer-sales/1','PUT',{}),/ملغاة/);
 });
+test('maintenance type persists through editing/completion and legacy tickets stay unclassified',async()=>{
+ const db=database({maintenance_tickets:[{id:10,status:'in_progress',customer_name:'Legacy',device_issue:'Old issue',opened_at:'2026-10-20T10:00:00Z',repair_charge_egp:0}]});
+ for(const device_type of ['printer','device']){
+  const ticket=await db.request('/maintenance-tickets','POST',{device_type,customer_name:'Client',phone:'',device_issue:'Test issue'});
+  assert.equal(ticket.device_type,device_type);assert.equal(ticket.phone,null);
+  const done=await db.request(`/maintenance-tickets/${ticket.id}`,'PUT',{status:'completed',repair_charge_egp:100,maintenance_description:'Repair done'});
+  assert.equal(done.device_type,device_type);const invoice=await db.request(`/sales-hub/maintenance/${ticket.id}`);assert.equal(invoice.repair_type,device_type);
+ }
+ const old=(await db.request('/maintenance-tickets')).find(t=>t.id===10);assert.equal(old.device_type,undefined);
+ await assert.rejects(db.request('/maintenance-tickets','POST',{device_type:'invalid',customer_name:'Client',device_issue:'Test'}),/اختر صيانة/);
+ const changed=await db.request('/maintenance-tickets/10','PUT',{device_type:'device'});assert.equal(changed.device_type,'device');
+});
+test('multi-line spare invoice deducts component stock atomically, snapshots cost and records collection',async()=>{
+ const db=database({components:[{id:1,item_name:'Cable',stock_qty:10},{id:2,item_name:'Sensor',stock_qty:4}],component_price_history:[{id:1,component_id:1,is_active:true,price_egp:30,effective_at:'2026-10-01T10:00:00Z'}]});
+ const row=await db.request('/spare-sales','POST',{items:[{component_id:1,quantity:2,unit_price:50,unit_cost_egp:0,_key:'ignore'},{component_id:2,quantity:1,unit_price:100}],customer_name:'Client',payment_amount:50,payment_method:'cash',sold_at:'2026-10-20T10:00:00Z'});
+ assert.equal(row.total_amount,200);assert.equal(row.items[0].unit_cost_egp,30);assert.equal(row.items[0]._key,undefined);assert.equal(row.items[1].cost_complete,false);assert.equal(db.data.components[0].stock_qty,8);assert.equal(db.data.components[1].stock_qty,3);
+ const invoice=await db.request('/sales-hub/spare/1');assert.equal(invoice.number,'S-1');assert.equal(invoice.balance,150);assert.equal(invoice.lines.length,2);
+ const report=await db.request('/reports/sales?period=date_range&start_date=2026-10-20&end_date=2026-10-20');assert.equal(report.summary.spare_revenue_egp,200);assert.equal(report.summary.spare_cost_egp,60);assert.equal(report.summary.spare_profit_egp,140);assert.equal(report.summary.unified_sales_egp,200);assert.equal(report.summary.spare_incomplete_cost_invoices,1);
+});
+test('spare edits replace quantity, preserve historical purchase cost and reject stale or excessive changes',async()=>{
+ const db=database({component_price_history:[{id:1,component_id:1,is_active:true,price_egp:20,effective_at:'2026-10-01T10:00:00Z'}]});
+ await db.request('/spare-sales','POST',{items:[{component_id:1,quantity:2,unit_price:50}],payment_amount:100,payment_method:'cash'});
+ db.data.component_price_history[0].price_egp=99;
+ const row=await db.request('/spare-sales/1','PUT',{invoice_revision:1,items:[{component_id:1,quantity:4,unit_price:25}]});assert.equal(row.items[0].quantity,4);assert.equal(row.items[0].unit_cost_egp,20);assert.equal(db.data.components[0].stock_qty,6);
+ await assert.rejects(db.request('/spare-sales/1','PUT',{invoice_revision:1,items:[{component_id:1,quantity:1,unit_price:100}]}),/اتغيّرت/);
+ await assert.rejects(db.request('/spare-sales/1','PUT',{invoice_revision:2,items:[{component_id:1,quantity:11,unit_price:100}]}),/غير كاف/);assert.equal(db.data.components[0].stock_qty,6);assert.equal(db.data.spare_sales[0].items[0].quantity,4);
+});
+test('spare partial return and cancellation restore each component exactly once and preserve refund credit',async()=>{
+ const db=database({components:[{id:1,item_name:'Cable',stock_qty:10},{id:2,item_name:'Sensor',stock_qty:4}]});
+ await db.request('/spare-sales','POST',{items:[{component_id:1,quantity:3,unit_price:50},{component_id:2,quantity:2,unit_price:100}],payment_amount:350,payment_method:'cash'});
+ let row=await db.request('/sales-hub/spare/1/return','POST',{revision:1,line_index:1,quantity:1,reason:'One sensor returned'});assert.equal(row.net,250);assert.equal(row.balance,-100);assert.equal(db.data.components[1].stock_qty,3);
+ row=await db.request('/sales-hub/spare/1/cancel','POST',{revision:2,reason:'Cancel remainder'});assert.equal(row.balance,-350);assert.equal(db.data.components[0].stock_qty,10);assert.equal(db.data.components[1].stock_qty,4);
+ await assert.rejects(db.request('/sales-hub/spare/1/cancel','POST',{revision:3,reason:'Again'}),/بالفعل/);assert.equal(db.data.components[1].stock_qty,4);
+ await assert.rejects(db.request('/spare-sales/1','PUT',{invoice_revision:3,items:[{component_id:1,quantity:1,unit_price:100}]}),/ملغاة/);
+ const refunded=await db.request('/sales-hub/spare/1/payment','POST',{revision:3,direction:'refund',amount:350,method:'cash'});assert.equal(refunded.balance,0);
+});
+test('invalid spare lines, duplicate parts and payment failure leave inventory unchanged',async()=>{
+ const db=database();for(const items of [[],[{component_id:1,quantity:1.5,unit_price:50}],[{component_id:1,quantity:11,unit_price:50}],[{component_id:999,quantity:1,unit_price:50}],[{component_id:1,quantity:1,unit_price:''}],[{component_id:1,quantity:1,unit_price:50},{component_id:1,quantity:1,unit_price:50}]])await assert.rejects(db.request('/spare-sales','POST',{items}));
+ await assert.rejects(db.request('/spare-sales','POST',{items:[{component_id:1,quantity:2,unit_price:50}],payment_amount:0,payment_method:'cash'}),/اسم العميل/);
+ assert.equal(db.data.components[0].stock_qty,10);assert.equal(db.data.spare_sales?.length||0,0);assert.equal(db.data.inventory_ledger.length,0);
+});
+test('spare invoices and repair subtypes filter independently and dashboard includes spare revenue',async()=>{
+ const db=database();await db.request('/spare-sales','POST',{items:[{component_id:1,quantity:1,unit_price:50}],sold_at:'2026-10-20T10:00:00Z'});
+ for(const device_type of ['printer','device']){const ticket=await db.request('/maintenance-tickets','POST',{device_type,customer_name:'Client',device_issue:'Repair'});await db.request(`/maintenance-tickets/${ticket.id}`,'PUT',{status:'completed',repair_charge_egp:100});}
+ const {filterInvoices}=await import('../client/src/salesModel.js'),rows=await db.request('/sales-hub');assert.equal(filterInvoices(rows,{kind:'spare'}).length,1);assert.equal(filterInvoices(rows,{kind:'maintenance',repair_type:'printer'}).length,1);assert.equal(filterInvoices(rows,{kind:'maintenance',repair_type:'device'}).length,1);
+ const {dashboardModel}=await import('../client/src/dashboardModel.js'),{DateTime}=require('../client/node_modules/luxon');const m=dashboardModel(await db.request('/dashboard'),'custom','2026-10-20','2026-10-20',DateTime.fromISO('2026-10-20'));assert.equal(m.spareRevenue,50);assert.equal(m.revenue,50);assert.equal(m.buckets[0].spares,50);
+});
