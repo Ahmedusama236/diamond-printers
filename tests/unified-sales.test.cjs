@@ -109,6 +109,20 @@ test('multi-line spare invoice deducts component stock atomically, snapshots cos
  const invoice=await db.request('/sales-hub/spare/1');assert.equal(invoice.number,'S-1');assert.equal(invoice.balance,150);assert.equal(invoice.lines.length,2);
  const report=await db.request('/reports/sales?period=date_range&start_date=2026-10-20&end_date=2026-10-20');assert.equal(report.summary.spare_revenue_egp,200);assert.equal(report.summary.spare_cost_egp,60);assert.equal(report.summary.spare_profit_egp,140);assert.equal(report.summary.unified_sales_egp,200);assert.equal(report.summary.spare_incomplete_cost_invoices,1);
 });
+
+test('manual spare item sells without stock, while tracked items still enforce stock',async()=>{
+ const db=database();
+ const row=await db.request('/spare-sales','POST',{items:[{item_name:'خرطوش ألوان',quantity:2,unit_price:1800},{component_id:1,quantity:1,unit_price:50}],customer_name:'أحمد',payment_amount:3650,payment_method:'cash'});
+ assert.equal(row.total_amount,3650);assert.equal(row.items[0].item_name,'خرطوش ألوان');assert.equal(row.items[0].cost_complete,false);
+ assert.equal(db.data.components[0].stock_qty,9);assert.equal(db.data.inventory_ledger.length,1);
+ await assert.rejects(db.request('/spare-sales','POST',{items:[{component_id:1,quantity:10,unit_price:50}]}),/المخزون غير كاف/);
+ const updated=await db.request('/spare-sales/1','PUT',{invoice_revision:1,items:[{item_name:'خرطوش ألوان',quantity:3,unit_price:1800},{component_id:1,quantity:1,unit_price:50}]});
+ assert.equal(updated.total_amount,5450);assert.equal(db.data.components[0].stock_qty,9);
+ const returned=await db.request('/sales-hub/spare/1/return','POST',{revision:2,line_index:0,quantity:1,reason:'مرتجع'});
+ assert.equal(returned.net,3650);assert.equal(db.data.components[0].stock_qty,9);
+ const cancelled=await db.request('/sales-hub/spare/1/cancel','POST',{revision:3,reason:'إلغاء'});
+ assert.equal(cancelled.net,0);assert.equal(db.data.components[0].stock_qty,10);
+});
 test('spare edits replace quantity, preserve historical purchase cost and reject stale or excessive changes',async()=>{
  const db=database({component_price_history:[{id:1,component_id:1,is_active:true,price_egp:20,effective_at:'2026-10-01T10:00:00Z'}]});
  await db.request('/spare-sales','POST',{items:[{component_id:1,quantity:2,unit_price:50}],payment_amount:100,payment_method:'cash'});

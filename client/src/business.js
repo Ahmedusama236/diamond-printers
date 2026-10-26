@@ -101,6 +101,11 @@ async function sparePayload(body,current={}){
       const previous=current.items?.find(i=>i.shop_item_id===shopId);
       items.push({shop_item_id:shopId,item_name:good.item_name,quantity,unit_price:isGift?0:toNonNegativeNumber(item.unit_price,'unit_price'),is_gift:isGift,unit_cost_egp:previous?previous.unit_cost_egp:Number(good.latest_price_egp||0),cost_complete:previous?Boolean(previous.cost_complete):good.latest_price_egp!=null});continue;
     }
+    if(!item.component_id){
+      const name=requireName(item.item_name,'item_name'),key='manual:'+name.toLocaleLowerCase();
+      if(seen.has(key))throw new Error('الصنف مكرر؛ عدّل الكمية في نفس السطر');seen.add(key);
+      items.push({item_name:name,quantity,unit_price:isGift?0:toNonNegativeNumber(item.unit_price,'unit_price'),is_gift:isGift,unit_cost_egp:0,cost_complete:false});continue;
+    }
     const componentId=toPositiveInt(item.component_id,'component_id');
     if(seen.has(componentId))throw new Error('القطعة مكررة؛ عدّل الكمية في نفس السطر');seen.add(componentId);
     const component=await getComponentById(componentId);if(!component)throw new Error('قطعة الغيار غير موجودة بالمخزون');
@@ -112,7 +117,7 @@ async function sparePayload(body,current={}){
   if(!Number.isFinite(total)||total>999999999999)throw new Error('إجمالي الفاتورة أكبر من الحد المسموح');
   return {items,total_amount:total,delivery_method:deliveryValue(body.delivery_method,current.delivery_method),customer_name:values.customer_name?String(values.customer_name).trim()||null:null,customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),updated_at:nowIso()};
 }
-async function applySpareSale(row){for(const item of row.items){if(item.shop_item_id){await shop.move(item.shop_item_id,-item.quantity,'spare_sale',row.id,item.is_gift?'gift':'sale');continue;}await updateComponentStock(item.component_id,-item.quantity);await insertLedger({itemType:'component',itemId:item.component_id,deltaQty:-item.quantity,reason:'sale',referenceType:'spare_sale',referenceId:row.id});}}
+async function applySpareSale(row){for(const item of row.items){if(item.shop_item_id){await shop.move(item.shop_item_id,-item.quantity,'spare_sale',row.id,item.is_gift?'gift':'sale');continue;}if(!item.component_id)continue;await updateComponentStock(item.component_id,-item.quantity);await insertLedger({itemType:'component',itemId:item.component_id,deltaQty:-item.quantity,reason:'sale',referenceType:'spare_sale',referenceId:row.id});}}
 
 function printerInvoicePayload(body,current={}) {
   const values={...current,...body};
