@@ -18,7 +18,7 @@ export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRow
   let row=await get(kind,id);const meta=await metaFor(kind,id);
   if(Number(body.revision)!==meta.revision)throw new Error('الفاتورة اتغيّرت؛ حدّث البيانات وراجعها قبل الحفظ');
   if(action==='review'){
-   if(meta.payment_reviewed)throw new Error('التحصيل مُراجع بالفعل؛ سجّل دفعة أو رد مبلغ');
+   if(meta.payment_reviewed)throw new Error('التحصيل مُراجع بالفعل؛ سجّل دفعة جديدة عند الحاجة');
    const paid=amount(body.amount);if(paid>row.net)throw new Error('المدفوع أكبر من صافي الفاتورة');
    const name=String(body.customer_name||row.customer_name||'').trim();if(paid<row.net&&!name)throw new Error('أدخل اسم العميل لحفظ مبلغ مستحق عليه');
    await updateRows('sales_invoice_meta',{payment_reviewed:true,customer_name:name||null,customer_phone:String(body.customer_phone||row.phone||'').trim()||null},[['id',meta.id]]);
@@ -26,13 +26,14 @@ export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRow
    await audit(meta,'review',{amount:paid,customer_name:name});
   }else if(action==='payment'){
    if(!meta.payment_reviewed)throw new Error('راجع التحصيل السابق أولًا');
-   const n=amount(body.amount);positive(n,'المبلغ');const refund=body.direction==='refund';
-   if(refund?n>Math.max(0,-row.balance):n>Math.max(0,row.balance))throw new Error(refund?'المبلغ أكبر من المبلغ الواجب رده':'المبلغ أكبر من المتبقي على العميل');
+   if(body.direction==='refund')throw new Error('رد المبلغ غير متاح في نظام الفواتير الحالي');
+   const n=amount(body.amount);positive(n,'المبلغ');
+   if(n>row.balance)throw new Error('المبلغ أكبر من المتبقي على العميل');
    const date=toUtcIsoFromInput(body.paid_at,'paid_at');if(Date.parse(date)>Date.now()+60000)throw new Error('تاريخ التحصيل لا يمكن أن يكون في المستقبل');
-   await insertRow('sales_payments',{invoice_id:meta.id,direction:refund?'refund':'receipt',amount:n,method:paymentMethod(body.method),paid_at:date,note:String(body.note||'').trim()||null});
-   await audit(meta,refund?'refund':'payment',{amount:n,method:body.method,paid_at:date});
+   await insertRow('sales_payments',{invoice_id:meta.id,direction:'receipt',amount:n,method:paymentMethod(body.method),paid_at:date,note:String(body.note||'').trim()||null});
+   await audit(meta,'payment',{amount:n,method:body.method,paid_at:date});
   }else if(action==='return'){
-   if(!meta.payment_reviewed)throw new Error('راجع التحصيل السابق قبل تسجيل مرتجع حتى يظهر المبلغ الواجب رده بشكل صحيح');
+   if(!meta.payment_reviewed)throw new Error('راجع التحصيل السابق قبل تسجيل مرتجع حتى يبقى سجل الفاتورة صحيحًا');
    if(meta.cancelled)throw new Error('الفاتورة ملغاة');if(kind==='maintenance')throw new Error('للصيانة استخدم إلغاء الفاتورة مع توضيح السبب');
    const index=Number(body.line_index),line=row.lines.find(l=>l.index===index),qty=positive(body.quantity,'العدد');
    if(!Number.isSafeInteger(qty)||!line||qty>line.quantity-line.returned)throw new Error('كمية المرتجع أكبر من الكمية المتاحة أو غير صحيحة');
@@ -40,7 +41,7 @@ export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRow
    const result=await insertRow('sales_returns',{invoice_id:meta.id,line_index:index,quantity:qty,amount:cash(qty*line.unit_price),reason});
    await restore(row,qty,result.id,'sales_return',index);await audit(meta,'return',{item:line.item_name,quantity:qty,amount:result.amount,reason});
   }else if(action==='cancel'){
-   if(!meta.payment_reviewed)throw new Error('راجع التحصيل السابق قبل إلغاء الفاتورة حتى يظهر المبلغ الواجب رده بشكل صحيح');
+   if(!meta.payment_reviewed)throw new Error('راجع التحصيل السابق قبل إلغاء الفاتورة حتى يبقى سجل الفاتورة صحيحًا');
    if(meta.cancelled)throw new Error('الفاتورة ملغاة بالفعل');const reason=String(body.reason||'').trim();if(!reason)throw new Error('اكتب سبب الإلغاء');
    await updateRows('sales_invoice_meta',{cancelled:true,cancel_reason:reason},[['id',meta.id]]);
    for(const line of row.lines)await restore(row,line.quantity-line.returned,meta.id,'sales_cancellation',line.index);
@@ -57,7 +58,6 @@ export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRow
  }
  async function edited(kind,id,beforeRow,afterRow){
   const meta=await metaFor(kind,id);
-  if(!meta.payment_reviewed&&invoiceSource(kind,beforeRow).total!==invoiceSource(kind,afterRow).total)throw new Error('راجع التحصيل السابق من المبيعات قبل تغيير قيمة الفاتورة');
   if(beforeRow.customer_name!==afterRow.customer_name||beforeRow.customer_phone!==afterRow.customer_phone||beforeRow.phone!==afterRow.phone)await updateRows('sales_invoice_meta',{customer_name:afterRow.customer_name||null,customer_phone:afterRow.customer_phone||afterRow.phone||null},[['id',meta.id]]);
   const updated=await get(kind,id);if(meta.payment_reviewed&&updated.balance>0&&!updated.customer_name)throw new Error('أدخل اسم العميل لحفظ مبلغ مستحق عليه');
   await audit(meta,'edit',{before:beforeRow,after:afterRow});await touch(meta);

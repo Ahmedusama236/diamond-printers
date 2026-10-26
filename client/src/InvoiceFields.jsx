@@ -10,5 +10,5 @@ export function InvoiceChecks({form,total,originalTotal}){
  const future=DateTime.fromISO(form.sold_at||'',{zone:'Africa/Cairo'}).toMillis()>Date.now()+60000;
  const unusual=originalTotal>0&&Math.abs(total-originalTotal)/originalTotal>0.3;
  const zero=total===0;
- return <>{form.id&&<div className="salesNotice">تعديل الفاتورة #{form.id} • الإجمالي السابق: {Number(originalTotal||0).toLocaleString('ar-EG')} جنيه ← الجديد: {Number(total||0).toLocaleString('ar-EG')} جنيه. تغيير الإجمالي يحدّث رصيد العميل، والدفعات السابقة تظل مسجّلة.</div>}{(future||unusual||zero)&&<label className="salesNotice" key={`${form.sold_at}-${total}`}><input type="checkbox" required/> راجعت {zero?'أن إجمالي الفاتورة صفر. ':''}{future?'أن تاريخ البيع في المستقبل. ':''}{unusual?'التغيير الكبير في قيمة الفاتورة.':''}</label>}</>;
+ return <>{form.id&&<div className="salesNotice">تعديل الفاتورة #{form.id} • الإجمالي السابق: {Number(originalTotal||0).toLocaleString('ar-EG')} جنيه ← الجديد: {Number(total||0).toLocaleString('ar-EG')} جنيه. المدفوع السابق يظل مسجّلًا، والمتبقي لا ينزل عن صفر.</div>}{(future||unusual||zero)&&<label className="salesNotice" key={`${form.sold_at}-${total}`}><input type="checkbox" required/> راجعت {zero?'أن إجمالي الفاتورة صفر. ':''}{future?'أن تاريخ البيع في المستقبل. ':''}{unusual?'التغيير الكبير في قيمة الفاتورة.':''}</label>}</>;
 }

@@ -13,16 +13,16 @@ Do not blindly restore that snapshot after recording new transactions: it would 
 - `/sales` is the combined invoice workspace. Existing `/printers/sales` links open its printer filter. Printer and product forms remain reachable as workflows from the new-invoice chooser.
 - Stable display numbers are `P-id`, `M-id`, `R-id`, preserving the existing source IDs. No duplicate invoice copies are created.
 - Completed maintenance appears as an invoice, including awaiting delivery. The legacy detailed maintenance revenue/profit report still recognizes delivered repairs; its caption distinguishes this from all completed invoices.
-- Historical collection status is **unknown**, not automatically paid or unpaid. One explicit review sets the opening collected amount; subsequent receipts/refunds are append-only. An outstanding customer balance requires a customer name; phone remains optional.
-- Review historical collections before changing an invoice's financial value, returning items or cancelling it. This avoids losing a refund obligation by establishing an opening receipt after reducing the invoice value. Descriptive edits remain available before review.
+- Historical collection status is **unknown**, not automatically paid or unpaid. One explicit review sets the opening collected amount; subsequent receipts remain recorded. An outstanding customer balance requires a customer name; phone remains optional.
+- Invoice prices can be edited before collection review. Returns and cancellation still require review of historical collections.
 - New printer/product invoices record their chosen initial receipt in the same transaction as invoice creation and stock movement.
 - Totals and filters use invoice date in Africa/Cairo. "Recorded collections" is the cumulative net receipts for those selected invoices, not cash received during that period. Unknown invoices contribute to sales, not to guessed collections/debt.
-- Returns operate on individual invoice lines with bounded integer quantities and saved sale prices. Product returns add finished stock; printer/accessory lines have no connection to component stock. Cancellation restores only the remaining unreturned product quantity and changes net invoice revenue to zero. Neither operation invents a cash refund: an actual refund is recorded separately, limited to the credit owed.
+- Returns operate on individual invoice lines with bounded integer quantities and saved sale prices. Tracked goods return to their stock. Cancellation restores only the remaining unreturned quantity and changes net invoice revenue to zero. Recorded payments remain in history, while the customer balance never falls below zero.
 - Cancelling maintenance does not restore consumed parts; the cost remains in the detailed profit report.
-- Invoice deletion is blocked. Cancelled/returned invoice lines cannot be edited. Payments and return history cannot be silently rewritten. Edits preserve recorded payments and produce a credit if the revised amount is lower.
+- Permanent invoice deletion requires the exact invoice number and removes the source, its collection/return history and associated inventory movements in one transaction. Cancelled/returned invoice lines cannot be edited. Ordinary edits preserve recorded payments; lowering the price does not create a refund action or a negative balance.
 - Manufacturing payment is independent of customer payment and is not inferred from it. Cancellation/return does not automatically claim that the manufacturer was paid.
 - Product profit with missing or historical unverified costs is labeled provisional. New sales store `cost_complete`; old costs are not retroactively guessed.
-- The shared PostgreSQL transaction/advisory lock and retry ledger cover invoice mutations, source edits, stock changes, receipts, refunds, and audit events. Expected revisions reject stale forms. Authenticated actor names are supplied by the server, never trusted from client input.
+- The shared PostgreSQL transaction/advisory lock and retry ledger cover invoice mutations, source edits, stock changes, receipts, and audit events. Expected revisions reject stale forms. Authenticated actor names are supplied by the server, never trusted from client input.
 
 ## Verification
 

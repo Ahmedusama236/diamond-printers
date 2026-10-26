@@ -2,7 +2,7 @@ import {DateTime} from 'luxon';
 import {printerInvoiceTotal} from './printerInvoices.js';
 export const invoiceKinds={product:'بيع جهاز',printer:'بيع طابعة',spare:'بيع قطع غيار ومستلزمات',maintenance:'صيانة'};
 export const repairTypes={printer:'صيانة طابعة',device:'صيانة جهاز'};
-export const paymentStates={unknown:'غير مُراجع',due:'عليه مبلغ مستحق',unpaid:'غير مدفوع',partial:'مدفوع جزئيًا',paid:'مدفوع',refund:'مبلغ واجب رده'};
+export const paymentStates={unknown:'غير مُراجع',due:'عليه مبلغ مستحق',unpaid:'غير مدفوع',partial:'مدفوع جزئيًا',paid:'مدفوع'};
 export const invoiceStates={active:'سارية',partial_return:'مرتجع جزئي',returned:'مرتجعة بالكامل',cancelled:'ملغاة'};
 export const cash=n=>Math.round((Number(n)+Number.EPSILON)*100)/100;
 export function invoiceSource(kind,row){
@@ -16,10 +16,10 @@ export function decorateInvoice(base,meta,payments=[],returns=[]){
  const returned=returns.reduce((sum,r)=>sum+Number(r.amount),0);
  const net=meta?.cancelled?0:cash(base.total-returned);
  const known=Boolean(meta?.payment_reviewed),paid=cash(payments.reduce((s,p)=>s+(p.direction==='refund'?-1:1)*Number(p.amount),0));
- const balance=known?cash(net-paid):null;
+ const balance=known?Math.max(0,cash(net-paid)):null;
  const lines=base.lines.map(line=>({...line,returned:returns.filter(r=>r.line_index===line.index).reduce((s,r)=>s+Number(r.quantity),0)}));
  const state=meta?.cancelled?'cancelled':returns.length?(lines.every(l=>l.returned>=l.quantity)?'returned':'partial_return'):'active';
- return {...base,lines,meta:meta||null,payments,returns,net,paid:known?paid:null,balance,returned:cash(returned),state,payment_state:!known?'unknown':balance<0?'refund':balance===0?'paid':paid===0?'unpaid':'partial',customer_name:meta?.customer_name||base.customer_name,phone:meta?.customer_phone||base.phone};
+ return {...base,lines,meta:meta||null,payments,returns,net,paid:known?paid:null,balance,returned:cash(returned),state,payment_state:!known?'unknown':balance===0?'paid':paid===0?'unpaid':'partial',customer_name:meta?.customer_name||base.customer_name,phone:meta?.customer_phone||base.phone};
 }
 export function filterInvoices(rows,f={}){
  const q=String(f.q||'').trim().toLowerCase();
@@ -28,7 +28,7 @@ export function filterInvoices(rows,f={}){
   return (!f.from||day>=f.from)&&(!f.to||day<=f.to)&&(!f.kind||r.kind===f.kind)&&(!f.delivery_method||r.delivery_method===f.delivery_method)&&(!f.repair_type||(r.kind==='maintenance'&&r.repair_type===f.repair_type))&&(!f.state||r.state===f.state)&&(!f.payment||(f.payment==='due'?r.balance>0:r.payment_state===f.payment))&&(!f.manufacturing||r.kind==='product'&&!r.source.is_accounted)&&(!q||[r.number,r.name,r.customer_name,r.phone,r.serial,repairTypes[r.repair_type]||'',...r.lines.map(l=>l.item_name)].join(' ').toLowerCase().includes(q));
  });
 }
-export function salesTotals(rows){return rows.reduce((s,r)=>({count:s.count+1,sales:cash(s.sales+r.net),collected:cash(s.collected+(r.paid??0)),due:cash(s.due+Math.max(0,r.balance??0)),refund:cash(s.refund+Math.max(0,-(r.balance??0))),unknown:s.unknown+(r.paid==null?1:0)}),{count:0,sales:0,collected:0,due:0,refund:0,unknown:0});}
+export function salesTotals(rows){return rows.reduce((s,r)=>({count:s.count+1,sales:cash(s.sales+r.net),collected:cash(s.collected+(r.paid??0)),due:cash(s.due+(r.balance??0)),refund:0,unknown:s.unknown+(r.paid==null?1:0)}),{count:0,sales:0,collected:0,due:0,refund:0,unknown:0});}
 export function accountingProduct(invoice){
  const original=invoice.source,units=invoice.state==='cancelled'?0:invoice.lines[0].quantity-invoice.lines[0].returned;
  const cost=cash(Number(original.unit_purchase_cost_egp||0)*units),profit=cash(invoice.net-cost);

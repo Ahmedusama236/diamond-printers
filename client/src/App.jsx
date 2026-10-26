@@ -2346,7 +2346,7 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
         <>
           <h3>{t("reportSummary")}</h3>
           <p className="salesNotice">الإجماليات التالية تخص الفواتير المؤرخة داخل الفترة؛ المحصّل هو مجموع دفعات هذه الفواتير، وليس كشف حركة الخزنة خلال الفترة. إيراد الصيانة التفصيلي أدناه يخص المسلّم فقط.</p>
-          <div className="metrics"><Metric label="صافي كل المبيعات" value={reportData.summary.unified_sales_egp}/><Metric label="المحصّل المسجّل" value={reportData.summary.recorded_collections_egp}/><Metric label="المستحق على العملاء" value={reportData.summary.customer_due_egp}/><Metric label="واجب رده للعملاء" value={reportData.summary.refund_due_egp}/><Metric label="فواتير تحصيلها غير مُراجع" value={reportData.summary.unreviewed_invoices}/></div>
+          <div className="metrics"><Metric label="صافي كل المبيعات" value={reportData.summary.unified_sales_egp}/><Metric label="المحصّل المسجّل" value={reportData.summary.recorded_collections_egp}/><Metric label="المستحق على العملاء" value={reportData.summary.customer_due_egp}/><Metric label="فواتير تحصيلها غير مُراجع" value={reportData.summary.unreviewed_invoices}/></div>
           <p className="salesNotice">أرباح المنتجات تقديرية للفواتير التي بها تكلفة غير مكتملة أو لم تُراجع تكلفتها سابقًا: {reportData.summary.incomplete_cost_invoices||0} فاتورة. تكلفة غير مسجّلة لا تعني أن القطعة مجانية.</p>
           <div className="metrics">
             <Metric label={t("revenue")} value={reportData.summary.revenue_egp} />

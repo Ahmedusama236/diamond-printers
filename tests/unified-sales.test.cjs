@@ -63,19 +63,19 @@ test('collections reject overpayment, stale revisions and future dates without p
  await assert.rejects(db.request(path,'POST',{...body,revision:2,paid_at:'2099-01-01T00:00:00Z'}),/المستقبل/);
  assert.equal(db.data.sales_payments.length,1);row=await db.request(path,'POST',{...body,revision:2,amount:3000});assert.equal(row.payment_state,'paid');
 });
-test('product partial return then cancellation restores only remaining stock and requires separate refund',async()=>{
+test('product partial return then cancellation restores only remaining stock without a refund balance',async()=>{
  const db=database();await db.request('/sales-records','POST',{product_id:1,units_sold:3,unit_sell_price_egp:5500,manufacturing_cost_per_unit:1000,payment_amount:16500,payment_method:'cash'});
  assert.equal(db.data.finished_stock[0].stock_qty,7);assert.equal(db.data.sales_records[0].cost_complete,false);
  let row=await db.request('/sales-hub/product/1/return','POST',{revision:1,line_index:0,quantity:1,reason:'Returned one'});
- assert.equal(row.net,11000);assert.equal(row.balance,-5500);assert.equal(row.state,'partial_return');assert.equal(db.data.finished_stock[0].stock_qty,8);
+ assert.equal(row.net,11000);assert.equal(row.balance,0);assert.equal(row.paid,16500);assert.equal(row.state,'partial_return');assert.equal(db.data.finished_stock[0].stock_qty,8);
  await assert.rejects(db.request('/sales-hub/product/1/return','POST',{revision:2,line_index:0,quantity:3,reason:'Too many'}),/كمية/);assert.equal(db.data.finished_stock[0].stock_qty,8);
- row=await db.request('/sales-hub/product/1/cancel','POST',{revision:2,reason:'Cancelled remainder'});assert.equal(row.net,0);assert.equal(row.balance,-16500);assert.equal(db.data.finished_stock[0].stock_qty,10);
+ row=await db.request('/sales-hub/product/1/cancel','POST',{revision:2,reason:'Cancelled remainder'});assert.equal(row.net,0);assert.equal(row.balance,0);assert.equal(db.data.finished_stock[0].stock_qty,10);
  await assert.rejects(db.request('/sales-hub/product/1/cancel','POST',{revision:3,reason:'Again'}),/بالفعل/);assert.equal(db.data.finished_stock[0].stock_qty,10);
- row=await db.request('/sales-hub/product/1/payment','POST',{revision:3,direction:'refund',amount:16500,method:'cash'});assert.equal(row.balance,0);assert.equal(row.paid,0);assert.equal(db.data.inventory_ledger.length,3);assert.ok(db.data.inventory_ledger.every(r=>r.item_type==='finished'));
+ await assert.rejects(db.request('/sales-hub/product/1/payment','POST',{revision:3,direction:'refund',amount:16500,method:'cash'}),/غير متاح/);assert.equal(db.data.inventory_ledger.length,3);assert.ok(db.data.inventory_ledger.every(r=>r.item_type==='finished'));
 });
 test('printer accessories return independently, money rounds and main serial stays sold',async()=>{
  const db=database();await db.request('/printer-sales','POST',printer({serial_number:'CN53RBC1HM',extra_items:[{item_name:'Paper',quantity:3,unit_price:0.1}],payment_amount:5000.3,payment_method:'card'}));
- const row=await db.request('/sales-hub/printer/1/return','POST',{revision:1,line_index:1,quantity:3,reason:'Paper returned'});assert.equal(row.net,5000);assert.equal(row.balance,-0.3);assert.equal(row.state,'partial_return');assert.equal(row.lines[0].returned,0);
+ const row=await db.request('/sales-hub/printer/1/return','POST',{revision:1,line_index:1,quantity:3,reason:'Paper returned'});assert.equal(row.net,5000);assert.equal(row.balance,0);assert.equal(row.state,'partial_return');assert.equal(row.lines[0].returned,0);
  await assert.rejects(db.request('/printer-sales','POST',printer({serial_number:'cn53rbc1hm'})),/P-1/);assert.equal(db.data.printer_sales.length,1);
 });
 test('review requires customer for debt, blocks second baseline and writes named audit events',async()=>{
@@ -86,7 +86,7 @@ test('review requires customer for debt, blocks second baseline and writes named
 });
 test('edits retain payments, record before and after, reject stale forms and cannot mutate returned invoices',async()=>{
  const db=database();await db.request('/printer-sales','POST',printer({payment_amount:5000,payment_method:'cash'}));
- await db.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:4000});let [row]=await db.request('/sales-hub');assert.equal(row.balance,-1000);assert.equal(db.data.sales_payments.length,1);
+ await db.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:4000});let [row]=await db.request('/sales-hub');assert.equal(row.net,4000);assert.equal(row.balance,0);assert.equal(row.paid,5000);assert.equal(row.payment_state,'paid');assert.equal(db.data.sales_payments.length,1);
  assert.equal(db.data.sales_events.at(-1).details.before.unit_price,5000);assert.equal(db.data.sales_events.at(-1).details.after.unit_price,4000);
  await assert.rejects(db.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:3000}),/اتغيّرت/);
  await db.request('/sales-hub/printer/1/return','POST',{revision:2,line_index:0,quantity:1,reason:'Return'});
@@ -116,13 +116,13 @@ test('reports and dashboard use net sales after product and printer returns',asy
  const report=await db.request('/reports/sales?period=date_range&start_date=2026-10-20&end_date=2026-10-20');assert.equal(report.summary.revenue_egp,5500);assert.equal(report.summary.purchase_cost_egp,1000);assert.equal(report.summary.unified_sales_egp,5500);
  const {dashboardModel}=await import('../client/src/dashboardModel.js');const {DateTime}=require('../client/node_modules/luxon');const data=await db.request('/dashboard');const m=dashboardModel(data,'custom','2026-10-20','2026-10-20',DateTime.fromISO('2026-10-20'));assert.equal(m.productRevenue,5500);assert.equal(m.units,1);
 });
-test('historical collections must be reviewed before financial corrections, and empty edits cannot bypass a return lock',async()=>{
+test('historical invoice price can change before collection review; returns and cancellation still require review',async()=>{
  const db=database({printer_sales:[{id:1,...printer()}]});
  await assert.rejects(db.request('/sales-hub/printer/1/return','POST',{revision:0,line_index:0,quantity:1,reason:'Return'}),/راجع التحصيل/);
- await assert.rejects(db.request('/printer-sales/1','PUT',{invoice_revision:0,unit_price:4000}),/راجع التحصيل/);
- assert.equal(db.data.printer_sales[0].unit_price,5000);
- await db.request('/sales-hub/printer/1/review','POST',{revision:0,amount:5000,method:'cash'});
- const row=await db.request('/sales-hub/printer/1/cancel','POST',{revision:1,reason:'Cancelled'});assert.equal(row.balance,-5000);
+ await db.request('/printer-sales/1','PUT',{invoice_revision:0,unit_price:4000});
+ assert.equal(db.data.printer_sales[0].unit_price,4000);
+ await db.request('/sales-hub/printer/1/review','POST',{revision:1,amount:4000,method:'cash'});
+ const row=await db.request('/sales-hub/printer/1/cancel','POST',{revision:2,reason:'Cancelled'});assert.equal(row.balance,0);
  await assert.rejects(db.request('/printer-sales/1','PUT',{}),/ملغاة/);
 });
 test('maintenance type persists through editing/completion and legacy tickets stay unclassified',async()=>{
@@ -166,14 +166,14 @@ test('spare edits replace quantity, preserve historical purchase cost and reject
  await assert.rejects(db.request('/spare-sales/1','PUT',{invoice_revision:1,items:[{component_id:1,quantity:1,unit_price:100}]}),/اتغيّرت/);
  await assert.rejects(db.request('/spare-sales/1','PUT',{invoice_revision:2,items:[{component_id:1,quantity:11,unit_price:100}]}),/غير كاف/);assert.equal(db.data.components[0].stock_qty,6);assert.equal(db.data.spare_sales[0].items[0].quantity,4);
 });
-test('spare partial return and cancellation restore each component exactly once and preserve refund credit',async()=>{
+test('spare partial return and cancellation restore each component without a refund balance',async()=>{
  const db=database({components:[{id:1,item_name:'Cable',stock_qty:10},{id:2,item_name:'Sensor',stock_qty:4}]});
  await db.request('/spare-sales','POST',{items:[{component_id:1,quantity:3,unit_price:50},{component_id:2,quantity:2,unit_price:100}],payment_amount:350,payment_method:'cash'});
- let row=await db.request('/sales-hub/spare/1/return','POST',{revision:1,line_index:1,quantity:1,reason:'One sensor returned'});assert.equal(row.net,250);assert.equal(row.balance,-100);assert.equal(db.data.components[1].stock_qty,3);
- row=await db.request('/sales-hub/spare/1/cancel','POST',{revision:2,reason:'Cancel remainder'});assert.equal(row.balance,-350);assert.equal(db.data.components[0].stock_qty,10);assert.equal(db.data.components[1].stock_qty,4);
+ let row=await db.request('/sales-hub/spare/1/return','POST',{revision:1,line_index:1,quantity:1,reason:'One sensor returned'});assert.equal(row.net,250);assert.equal(row.balance,0);assert.equal(db.data.components[1].stock_qty,3);
+ row=await db.request('/sales-hub/spare/1/cancel','POST',{revision:2,reason:'Cancel remainder'});assert.equal(row.balance,0);assert.equal(db.data.components[0].stock_qty,10);assert.equal(db.data.components[1].stock_qty,4);
  await assert.rejects(db.request('/sales-hub/spare/1/cancel','POST',{revision:3,reason:'Again'}),/بالفعل/);assert.equal(db.data.components[1].stock_qty,4);
  await assert.rejects(db.request('/spare-sales/1','PUT',{invoice_revision:3,items:[{component_id:1,quantity:1,unit_price:100}]}),/ملغاة/);
- const refunded=await db.request('/sales-hub/spare/1/payment','POST',{revision:3,direction:'refund',amount:350,method:'cash'});assert.equal(refunded.balance,0);
+ await assert.rejects(db.request('/sales-hub/spare/1/payment','POST',{revision:3,direction:'refund',amount:350,method:'cash'}),/غير متاح/);
 });
 test('invalid spare lines, duplicate parts and payment failure leave inventory unchanged',async()=>{
  const db=database();for(const items of [[],[{component_id:1,quantity:1.5,unit_price:50}],[{component_id:1,quantity:11,unit_price:50}],[{component_id:999,quantity:1,unit_price:50}],[{component_id:1,quantity:1,unit_price:''}],[{component_id:1,quantity:1,unit_price:50},{component_id:1,quantity:1,unit_price:50}]])await assert.rejects(db.request('/spare-sales','POST',{items}));
@@ -224,7 +224,7 @@ test('printer shop extras edit by replacement, reject overselling and preserve i
 test('returning a gifted printer accessory restores stock with no cash credit; cancellation restores the remainder once',async()=>{
  const db=database();await buyShop(db);await db.request('/printer-sales','POST',printer({extra_items:[{shop_item_id:1,item_name:'Paper',quantity:3,is_gift:true,unit_price:''}],payment_amount:5000,payment_method:'cash'}));
  let row=await db.request('/sales-hub/printer/1/return','POST',{revision:1,line_index:1,quantity:1,reason:'Gift returned'});assert.equal(row.balance,0);assert.equal(row.net,5000);assert.equal(row.returns[0].amount,0);assert.equal(db.data.shop_items[0].stock_qty,8);
- row=await db.request('/sales-hub/printer/1/cancel','POST',{revision:2,reason:'Cancel invoice'});assert.equal(db.data.shop_items[0].stock_qty,10);assert.equal(row.balance,-5000);
+ row=await db.request('/sales-hub/printer/1/cancel','POST',{revision:2,reason:'Cancel invoice'});assert.equal(db.data.shop_items[0].stock_qty,10);assert.equal(row.balance,0);
  await assert.rejects(db.request('/sales-hub/printer/1/cancel','POST',{revision:3,reason:'Again'}),/بالفعل/);assert.equal(db.data.shop_items[0].stock_qty,10);
 });
 test('standalone sales can mix shop gifts and component parts without confusing identical IDs',async()=>{

@@ -498,7 +498,7 @@ function buildCsv(report) {
     ),
     "",
     ["summary", "", "", "", "", ""].join(","),
-    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','refund_due_egp','unreviewed_invoices','incomplete_cost_invoices','spare_revenue_egp','spare_cost_egp','spare_profit_egp','spare_incomplete_cost_invoices','printer_shop_gifts_cost_egp'].map(key=>[key,report.summary[key]].join(',')),
+    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','unreviewed_invoices','incomplete_cost_invoices','spare_revenue_egp','spare_cost_egp','spare_profit_egp','spare_incomplete_cost_invoices','printer_shop_gifts_cost_egp'].map(key=>[key,report.summary[key]].join(',')),
     ["revenue_egp", report.summary.revenue_egp].join(","),
     ["purchase_cost_egp", report.summary.purchase_cost_egp].join(","),
     ["gross_profit_egp", report.summary.gross_profit_egp].join(","),
