@@ -59,8 +59,31 @@ export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRow
  async function edited(kind,id,beforeRow,afterRow){
   const meta=await metaFor(kind,id);
   if(beforeRow.customer_name!==afterRow.customer_name||beforeRow.customer_phone!==afterRow.customer_phone||beforeRow.phone!==afterRow.phone)await updateRows('sales_invoice_meta',{customer_name:afterRow.customer_name||null,customer_phone:afterRow.customer_phone||afterRow.phone||null},[['id',meta.id]]);
-  const updated=await get(kind,id);if(meta.payment_reviewed&&updated.balance>0&&!updated.customer_name)throw new Error('أدخل اسم العميل لحفظ مبلغ مستحق عليه');
-  await audit(meta,'edit',{before:beforeRow,after:afterRow});await touch(meta);
+  let updated=await get(kind,id),collectionAdjustment=null;
+  if(meta.payment_reviewed){
+   const oldTotal=invoiceSource(kind,beforeRow).total,previousPaid=updated.recordedPaid;
+   const wasFullyPaid=oldTotal>0&&previousPaid>=oldTotal;
+   const targetPaid=wasFullyPaid?updated.net:Math.min(previousPaid,updated.net);
+   let difference=cash(targetPaid-previousPaid);
+   if(difference){
+    const receipts=(await selectRows('sales_payments',{eq:[['invoice_id',meta.id]],order:[['id',false]]})).filter(payment=>payment.direction==='receipt');
+    if(difference>0){
+     if(!receipts.length)throw new Error('لا توجد دفعة مسجّلة لتعديل المدفوع');
+     const receipt=receipts[0];await updateRows('sales_payments',{amount:cash(Number(receipt.amount)+difference)},[['id',receipt.id]]);
+    }else{
+     for(const receipt of receipts){
+      if(difference>=0)break;
+      const reduction=Math.min(Number(receipt.amount),-difference);
+      await updateRows('sales_payments',{amount:cash(Number(receipt.amount)-reduction)},[['id',receipt.id]]);
+      difference=cash(difference+reduction);
+     }
+     if(difference<0)throw new Error('تعذّر ضبط المدفوع بعد تعديل السعر');
+    }
+    collectionAdjustment={before:previousPaid,after:targetPaid};updated=await get(kind,id);
+   }
+   if(updated.balance>0&&!updated.customer_name)throw new Error('أدخل اسم العميل لحفظ مبلغ مستحق عليه');
+  }
+  await audit(meta,'edit',{before:beforeRow,after:afterRow,...(collectionAdjustment?{collection_adjustment:collectionAdjustment}:{})});await touch(meta);
  }
  async function created(kind,row,body){
   const meta=await metaFor(kind,row.id);await audit(meta,'create',{invoice:row});

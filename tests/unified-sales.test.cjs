@@ -67,7 +67,7 @@ test('product partial return then cancellation restores only remaining stock wit
  const db=database();await db.request('/sales-records','POST',{product_id:1,units_sold:3,unit_sell_price_egp:5500,manufacturing_cost_per_unit:1000,payment_amount:16500,payment_method:'cash'});
  assert.equal(db.data.finished_stock[0].stock_qty,7);assert.equal(db.data.sales_records[0].cost_complete,false);
  let row=await db.request('/sales-hub/product/1/return','POST',{revision:1,line_index:0,quantity:1,reason:'Returned one'});
- assert.equal(row.net,11000);assert.equal(row.balance,0);assert.equal(row.paid,16500);assert.equal(row.state,'partial_return');assert.equal(db.data.finished_stock[0].stock_qty,8);
+ assert.equal(row.net,11000);assert.equal(row.balance,0);assert.equal(row.paid,11000);assert.equal(row.recordedPaid,16500);assert.equal(row.state,'partial_return');assert.equal(db.data.finished_stock[0].stock_qty,8);
  await assert.rejects(db.request('/sales-hub/product/1/return','POST',{revision:2,line_index:0,quantity:3,reason:'Too many'}),/كمية/);assert.equal(db.data.finished_stock[0].stock_qty,8);
  row=await db.request('/sales-hub/product/1/cancel','POST',{revision:2,reason:'Cancelled remainder'});assert.equal(row.net,0);assert.equal(row.balance,0);assert.equal(db.data.finished_stock[0].stock_qty,10);
  await assert.rejects(db.request('/sales-hub/product/1/cancel','POST',{revision:3,reason:'Again'}),/بالفعل/);assert.equal(db.data.finished_stock[0].stock_qty,10);
@@ -84,14 +84,25 @@ test('review requires customer for debt, blocks second baseline and writes named
  let row=await db.request('/sales-hub/printer/1/review','POST',{revision:0,amount:1000,method:'cash',customer_name:'Client'});assert.equal(row.balance,4000);assert.equal(row.customer_name,'Client');
  await assert.rejects(db.request('/sales-hub/printer/1/review','POST',{revision:1,amount:5000,method:'cash'}),/بالفعل/);assert.equal(db.data.sales_payments.length,1);assert.equal(db.data.sales_events[0].actor,'tester');
 });
-test('edits retain payments, record before and after, reject stale forms and cannot mutate returned invoices',async()=>{
+test('editing a fully paid invoice updates recorded payment to its new total and preserves audit',async()=>{
  const db=database();await db.request('/printer-sales','POST',printer({payment_amount:5000,payment_method:'cash'}));
- await db.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:4000});let [row]=await db.request('/sales-hub');assert.equal(row.net,4000);assert.equal(row.balance,0);assert.equal(row.paid,5000);assert.equal(row.payment_state,'paid');assert.equal(db.data.sales_payments.length,1);
+ await db.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:4000});let [row]=await db.request('/sales-hub');assert.equal(row.net,4000);assert.equal(row.balance,0);assert.equal(row.paid,4000);assert.equal(row.payment_state,'paid');assert.equal(db.data.sales_payments.length,1);
  assert.equal(db.data.sales_events.at(-1).details.before.unit_price,5000);assert.equal(db.data.sales_events.at(-1).details.after.unit_price,4000);
+ assert.deepEqual(db.data.sales_events.at(-1).details.collection_adjustment,{before:5000,after:4000});
  await assert.rejects(db.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:3000}),/اتغيّرت/);
  await db.request('/sales-hub/printer/1/return','POST',{revision:2,line_index:0,quantity:1,reason:'Return'});
  await assert.rejects(db.request('/printer-sales/1','PUT',{invoice_revision:3,unit_price:3000}),/مرتجع/);assert.equal(db.data.printer_sales[0].unit_price,4000);
  await assert.rejects(db.request('/sales-records/1','DELETE'),/إلغاء/);
+});
+test('a fully paid price increase follows the new total while partial payments never grow automatically',async()=>{
+ const full=database();await full.request('/printer-sales','POST',printer({payment_amount:5000,payment_method:'cash'}));
+ await full.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:5500});
+ let row=await full.request('/sales-hub/printer/1');assert.equal(row.net,5500);assert.equal(row.paid,5500);assert.equal(row.balance,0);
+ const partial=database();await partial.request('/printer-sales','POST',printer({customer_name:'Client',payment_amount:2000,payment_method:'cash'}));
+ await partial.request('/printer-sales/1','PUT',{invoice_revision:1,unit_price:6000});
+ row=await partial.request('/sales-hub/printer/1');assert.equal(row.paid,2000);assert.equal(row.balance,4000);
+ await partial.request('/printer-sales/1','PUT',{invoice_revision:2,unit_price:1500});
+ row=await partial.request('/sales-hub/printer/1');assert.equal(row.paid,1500);assert.equal(row.balance,0);
 });
 test('maintenance cancellation retains consumed parts cost and completed records cannot be deleted',async()=>{
  const db=database({maintenance_tickets:[{id:1,status:'completed',customer_name:'Client',repair_charge_egp:1000,delivered:true,delivered_at:'2026-10-20T10:00:00Z',completed_at:'2026-10-20T10:00:00Z'}],maintenance_parts:[{id:1,ticket_id:1,component_id:1,total_price_egp:100}]});

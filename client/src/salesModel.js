@@ -15,11 +15,11 @@ export function invoiceSource(kind,row){
 export function decorateInvoice(base,meta,payments=[],returns=[]){
  const returned=returns.reduce((sum,r)=>sum+Number(r.amount),0);
  const net=meta?.cancelled?0:cash(base.total-returned);
- const known=Boolean(meta?.payment_reviewed),paid=cash(payments.reduce((s,p)=>s+(p.direction==='refund'?-1:1)*Number(p.amount),0));
+ const known=Boolean(meta?.payment_reviewed),recordedPaid=cash(payments.reduce((s,p)=>s+(p.direction==='refund'?-1:1)*Number(p.amount),0)),paid=Math.max(0,Math.min(recordedPaid,net));
  const balance=known?Math.max(0,cash(net-paid)):null;
  const lines=base.lines.map(line=>({...line,returned:returns.filter(r=>r.line_index===line.index).reduce((s,r)=>s+Number(r.quantity),0)}));
  const state=meta?.cancelled?'cancelled':returns.length?(lines.every(l=>l.returned>=l.quantity)?'returned':'partial_return'):'active';
- return {...base,lines,meta:meta||null,payments,returns,net,paid:known?paid:null,balance,returned:cash(returned),state,payment_state:!known?'unknown':balance===0?'paid':paid===0?'unpaid':'partial',customer_name:meta?.customer_name||base.customer_name,phone:meta?.customer_phone||base.phone};
+ return {...base,lines,meta:meta||null,payments,returns,net,paid:known?paid:null,recordedPaid:known?recordedPaid:null,balance,returned:cash(returned),state,payment_state:!known?'unknown':balance===0?'paid':paid===0?'unpaid':'partial',customer_name:meta?.customer_name||base.customer_name,phone:meta?.customer_phone||base.phone};
 }
 export function filterInvoices(rows,f={}){
  const q=String(f.q||'').trim().toLowerCase();
