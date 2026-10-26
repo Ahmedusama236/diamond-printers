@@ -1,11 +1,14 @@
 import { DateTime } from "luxon";
 import {createInvoiceLedger} from './invoiceLedger.js';
 import {accountingProduct,accountingSpare,filterInvoices,salesTotals} from './salesModel.js';
+import {createShopInventory} from './shopInventory.js';
+import {deliveryValue,giftValue} from './invoiceOptions.js';
 
 // Each operation owns its database connection and helper scope.
 export function createBusiness(databaseRequest, context={}) {
 const readCache = new Map();
-const invoices=createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,updateComponentStock,insertLedger,actor:context.actor,nowIso,toUtcIsoFromInput});
+const shop=createShopInventory({selectRows,selectSingle,insertRow,updateRows,toPositiveInt,toNonNegativeNumber,toUtcIsoFromInput,nowIso,actor:context.actor});
+const invoices=createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,updateComponentStock,moveShopStock:shop.move,insertLedger,actor:context.actor,nowIso,toUtcIsoFromInput});
 
 const DATA_API_URL = import.meta.env.VITE_DATA_API_URL || "/api/data";
 
@@ -90,18 +93,26 @@ async function sparePayload(body,current={}){
   const seen=new Set(),items=[];
   for(const item of values.items){
     if(!item||typeof item!=='object')throw new Error('بيانات قطعة الغيار غير صالحة');
-    const componentId=toPositiveInt(item.component_id,'component_id'),quantity=toPositiveInt(item.quantity,'quantity');
+    const isGift=giftValue(item.is_gift),quantity=toPositiveInt(item.quantity,'quantity');
+    if(item.shop_item_id){
+      const shopId=toPositiveInt(item.shop_item_id,'shop_item_id'),key='shop:'+shopId;
+      if(seen.has(key))throw new Error('الصنف مكرر؛ عدّل الكمية في نفس السطر');seen.add(key);
+      const good=await shop.item(shopId);if(!good)throw new Error('صنف المحل غير موجود');if(good.stock_qty<quantity)throw new Error(`رصيد المحل غير كافٍ للصنف ${good.item_name}. المتاح: ${good.stock_qty}`);
+      const previous=current.items?.find(i=>i.shop_item_id===shopId);
+      items.push({shop_item_id:shopId,item_name:good.item_name,quantity,unit_price:isGift?0:toNonNegativeNumber(item.unit_price,'unit_price'),is_gift:isGift,unit_cost_egp:previous?previous.unit_cost_egp:Number(good.latest_price_egp||0),cost_complete:previous?Boolean(previous.cost_complete):good.latest_price_egp!=null});continue;
+    }
+    const componentId=toPositiveInt(item.component_id,'component_id');
     if(seen.has(componentId))throw new Error('القطعة مكررة؛ عدّل الكمية في نفس السطر');seen.add(componentId);
     const component=await getComponentById(componentId);if(!component)throw new Error('قطعة الغيار غير موجودة بالمخزون');
     if(component.stock_qty<quantity)throw new Error(`المخزون غير كافٍ للقطعة ${component.item_name}. المتاح: ${component.stock_qty}`);
     const previous=current.items?.find(line=>line.component_id===componentId),price=await getLatestPriceForComponent(componentId);
-    items.push({component_id:componentId,item_name:component.item_name,quantity,unit_price:toNonNegativeNumber(item.unit_price,'unit_price'),unit_cost_egp:previous?previous.unit_cost_egp:Number(price?.price_egp||0),cost_complete:previous?Boolean(previous.cost_complete):Boolean(price)});
+    items.push({component_id:componentId,item_name:component.item_name,quantity,unit_price:isGift?0:toNonNegativeNumber(item.unit_price,'unit_price'),is_gift:isGift,unit_cost_egp:previous?previous.unit_cost_egp:Number(price?.price_egp||0),cost_complete:previous?Boolean(previous.cost_complete):Boolean(price)});
   }
   const total=round2(items.reduce((sum,i)=>sum+round2(i.quantity*i.unit_price),0));
   if(!Number.isFinite(total)||total>999999999999)throw new Error('إجمالي الفاتورة أكبر من الحد المسموح');
-  return {items,total_amount:total,customer_name:values.customer_name?String(values.customer_name).trim()||null:null,customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),updated_at:nowIso()};
+  return {items,total_amount:total,delivery_method:deliveryValue(body.delivery_method,current.delivery_method),customer_name:values.customer_name?String(values.customer_name).trim()||null:null,customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),updated_at:nowIso()};
 }
-async function applySpareSale(row){for(const item of row.items){await updateComponentStock(item.component_id,-item.quantity);await insertLedger({itemType:'component',itemId:item.component_id,deltaQty:-item.quantity,reason:'sale',referenceType:'spare_sale',referenceId:row.id});}}
+async function applySpareSale(row){for(const item of row.items){if(item.shop_item_id){await shop.move(item.shop_item_id,-item.quantity,'spare_sale',row.id,item.is_gift?'gift':'sale');continue;}await updateComponentStock(item.component_id,-item.quantity);await insertLedger({itemType:'component',itemId:item.component_id,deltaQty:-item.quantity,reason:'sale',referenceType:'spare_sale',referenceId:row.id});}}
 
 function printerInvoicePayload(body,current={}) {
   const values={...current,...body};
@@ -110,23 +121,32 @@ function printerInvoicePayload(body,current={}) {
     if(!item||typeof item!=='object')throw new Error('بيانات الصنف الإضافي غير صالحة');
     const name=String(item.item_name||'').trim();
     if(!name)throw new Error(`أدخل اسم الصنف الإضافي ${index+1} أو احذفه`);
-    if(item.unit_price===''||item.unit_price==null)throw new Error(`أدخل سعر الصنف الإضافي ${index+1}`);
-    return {item_name:name,quantity:toPositiveInt(item.quantity === '' || item.quantity == null?1:item.quantity,'quantity'),unit_price:toNonNegativeNumber(item.unit_price,'unit_price')};
+    const isGift=giftValue(item.is_gift);
+    if(!isGift&&(item.unit_price===''||item.unit_price==null))throw new Error(`أدخل سعر الصنف الإضافي ${index+1}`);
+    return {item_name:name,quantity:toPositiveInt(item.quantity === '' || item.quantity == null?1:item.quantity,'quantity'),unit_price:isGift?0:toNonNegativeNumber(item.unit_price,'unit_price'),...(item.is_gift!==undefined?{is_gift:isGift}:{}),...(item.shop_item_id?{shop_item_id:toPositiveInt(item.shop_item_id,'shop_item_id')}: {})};
   });
-  if(values.unit_price===''||values.unit_price==null)throw new Error('أدخل سعر الوحدة');
+  const isGift=giftValue(values.is_gift);
+  if(!isGift&&(values.unit_price===''||values.unit_price==null))throw new Error('أدخل سعر الوحدة');
   const quantity=toPositiveInt(values.quantity === '' || values.quantity == null?1:values.quantity,'quantity');
-  const total=quantity*Number(values.unit_price)+extraItems.reduce((s,i)=>s+i.quantity*i.unit_price,0);
+  const total=quantity*(isGift?0:Number(values.unit_price))+extraItems.reduce((s,i)=>s+i.quantity*i.unit_price,0);
   if(!Number.isFinite(total)||total>999999999999)throw new Error('إجمالي الفاتورة أكبر من الحد المسموح');
   if(values.serial_number&&String(values.serial_number).trim()&&quantity!==1)throw new Error('عند تسجيل سريل، سجّل كل طابعة في فاتورة مستقلة');
   return {
     item_name:requireName(values.item_name),quantity,
-    unit_price:toNonNegativeNumber(values.unit_price,'unit_price'),extra_items:extraItems,
+    unit_price:isGift?0:toNonNegativeNumber(values.unit_price,'unit_price'),extra_items:extraItems,is_gift:isGift,delivery_method:deliveryValue(body.delivery_method,current.delivery_method),
     counter:values.counter === '' || values.counter == null?null:toNonNegativeInt(values.counter,'counter'),
     serial_number:values.serial_number == null?null:String(values.serial_number).trim()||null,
     customer_phone:values.customer_phone?String(values.customer_phone).trim()||null:null,
     customer_name:values.customer_name?String(values.customer_name).trim()||null:null,
     sold_at:toUtcIsoFromInput(values.sold_at,'sold_at'),
   };
+}
+async function stockedPrinterPayload(body,current={}){
+  const payload=printerInvoicePayload(body,current),totals=new Map();
+  for(const line of payload.extra_items){if(!line.shop_item_id)continue;const good=await shop.item(line.shop_item_id);if(!good)throw new Error('صنف المحل غير موجود');
+    totals.set(good.id,(totals.get(good.id)||0)+line.quantity);if(totals.get(good.id)>good.stock_qty)throw new Error(`رصيد المحل غير كافٍ للصنف ${good.item_name}. المتاح: ${good.stock_qty}`);
+    const previous=current.extra_items?.find(i=>i.shop_item_id===good.id);line.item_name=good.item_name;line.unit_cost_egp=previous?previous.unit_cost_egp:Number(good.latest_price_egp||0);line.cost_complete=previous?Boolean(previous.cost_complete):good.latest_price_egp!=null;
+  }return payload;
 }
 
 function toUtcIsoFromInput(input, fieldName) {
@@ -473,7 +493,7 @@ function buildCsv(report) {
     ),
     "",
     ["summary", "", "", "", "", ""].join(","),
-    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','refund_due_egp','unreviewed_invoices','incomplete_cost_invoices','spare_revenue_egp','spare_cost_egp','spare_profit_egp','spare_incomplete_cost_invoices'].map(key=>[key,report.summary[key]].join(',')),
+    ...['unified_sales_egp','recorded_collections_egp','customer_due_egp','refund_due_egp','unreviewed_invoices','incomplete_cost_invoices','spare_revenue_egp','spare_cost_egp','spare_profit_egp','spare_incomplete_cost_invoices','printer_shop_gifts_cost_egp'].map(key=>[key,report.summary[key]].join(',')),
     ["revenue_egp", report.summary.revenue_egp].join(","),
     ["purchase_cost_egp", report.summary.purchase_cost_egp].join(","),
     ["gross_profit_egp", report.summary.gross_profit_egp].join(","),
@@ -648,6 +668,7 @@ async function buildSalesReport(period, query) {
   const unified=salesTotals(filterInvoices(allInvoices,{from:start.toISODate(),to:end.toISODate()}));
   const spareInvoices=filterInvoices(allInvoices,{kind:'spare',from:start.toISODate(),to:end.toISODate()}),spareMetrics=spareInvoices.map(accountingSpare);
   const spareRevenue=round2(spareMetrics.reduce((s,r)=>s+r.revenue,0)),spareCost=round2(spareMetrics.reduce((s,r)=>s+r.cost,0)),spareProfit=round2(spareRevenue-spareCost);
+  const printerShopGiftsCost=round2(filterInvoices(allInvoices,{kind:'printer',from:start.toISODate(),to:end.toISODate()}).filter(i=>i.state!=='cancelled').reduce((sum,i)=>sum+i.lines.filter(l=>l.is_gift&&l.shop_item_id).reduce((s,l)=>s+(l.quantity-l.returned)*Number(l.unit_cost_egp||0),0),0));
   const productMap = new Map(products.map((row) => [row.id, row]));
   const filtered = [];
   for (const row of rows) {
@@ -709,6 +730,7 @@ async function buildSalesReport(period, query) {
       unified_sales_egp:unified.sales,recorded_collections_egp:unified.collected,customer_due_egp:unified.due,refund_due_egp:unified.refund,unreviewed_invoices:unified.unknown,
       incomplete_cost_invoices:filtered.filter(r=>r.cost_complete!==true&&r.units_sold>0).length,
       spare_revenue_egp:spareRevenue,spare_cost_egp:spareCost,spare_profit_egp:spareProfit,spare_incomplete_cost_invoices:spareMetrics.filter(m=>!m.complete).length,
+      printer_shop_gifts_cost_egp:printerShopGiftsCost,
       revenue_egp: round2(totalRevenue),
       purchase_cost_egp: round2(totalPurchaseCost),
       gross_profit_egp: round2(totalGrossProfit),
@@ -777,6 +799,8 @@ async function getMaintenanceTickets() {
 }
 
 async function handleGet(pathname, query) {
+  if(pathname==='/shop-items')return shop.items();
+  if(pathname==='/shop-purchases')return shop.purchases();
   if(pathname==='/sales-hub')return invoices.list();
   if(/^\/sales-hub\/(product|printer|spare|maintenance)\/\d+$/.test(pathname)){
     const [, ,kind,id]=pathname.split('/');const row=await invoices.get(kind,Number(id));
@@ -896,6 +920,7 @@ async function handleGet(pathname, query) {
 }
 
 async function handlePost(pathname, body) {
+  if(pathname==='/shop-purchases')return shop.purchase(body);
   if(pathname==='/spare-sales'){const row=await insertRow('spare_sales',await sparePayload(body));await applySpareSale(row);return row;}
   if (pathname === "/auth/login") {
     const result = await authRequest('login',body);
@@ -909,9 +934,8 @@ async function handlePost(pathname, body) {
   }
   if (pathname === '/accounts') return authRequest('create',body);
   if (pathname === '/printer-sales') {
-    return insertRow('printer_sales', {
-      ...printerInvoicePayload(body),request_id:body.request_id,
-    });
+    const row=await insertRow('printer_sales', {...await stockedPrinterPayload(body),request_id:body.request_id});
+    await shop.applyExtras(row);return row;
   }
   if (pathname === "/suppliers") {
     const now = nowIso();
@@ -1019,7 +1043,8 @@ async function handlePost(pathname, body) {
   if (pathname === "/sales-records") {
     const productId = toInt(body.product_id, "product_id");
     const unitsSold = toPositiveInt(body.units_sold, "units_sold");
-    const unitSellPriceEgp = toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp");
+    const isGift=giftValue(body.is_gift);
+    const unitSellPriceEgp = isGift?0:toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp");
     const manufacturingCostPerUnit = toNonNegativeNumber(body.manufacturing_cost_per_unit ?? 1000, "manufacturing_cost_per_unit");
     const soldAt = toUtcIsoFromInput(body.sold_at, "sold_at");
     if (!(await getProductById(productId))) throw new Error("Product not found");
@@ -1031,6 +1056,7 @@ async function handlePost(pathname, body) {
     const created = await insertRow("sales_records", {
       product_id: productId,
       units_sold: unitsSold,
+      is_gift:isGift,delivery_method:deliveryValue(body.delivery_method),
       customer_name:body.customer_name?String(body.customer_name).trim()||null:null,
       customer_phone:body.customer_phone?String(body.customer_phone).trim()||null:null,
       unit_sell_price_egp: unitSellPriceEgp,
@@ -1138,17 +1164,20 @@ async function handlePost(pathname, body) {
 }
 
 async function handlePut(pathname, body) {
+  if(/^\/shop-purchases\/\d+$/.test(pathname))return shop.purchase(body,toPositiveInt(pathname.split('/')[2],'id'));
   if(/^\/spare-sales\/\d+$/.test(pathname)){
     const id=toPositiveInt(pathname.split('/')[2],'id'),current=await selectSingle('spare_sales',{eq:[['id',id]]});
     if(!current)throw new Error('الفاتورة غير موجودة');
     await reverseLedgerForReference('spare_sale',id);
+    await shop.reverse('spare_sale',id);
     const payload=await sparePayload(body,current),row=(await updateRows('spare_sales',payload,[['id',id]]))[0];await applySpareSale(row);return row;
   }
   if (/^\/printer-sales\/\d+$/.test(pathname)) {
     const invoiceId=toPositiveInt(pathname.split('/')[2],'invoice_id');
     const current=await selectSingle('printer_sales',{eq:[['id',invoiceId]]});
     if(!current)throw withStatus(404,'الفاتورة غير موجودة');
-    return (await updateRows('printer_sales',printerInvoicePayload(body,current),[['id',invoiceId]]))[0];
+    await shop.reverse('printer_sale',invoiceId);
+    const row=(await updateRows('printer_sales',await stockedPrinterPayload(body,current),[['id',invoiceId]]))[0];await shop.applyExtras(row);return row;
   }
   if (pathname.startsWith('/accounts/')) return authRequest('update',{...body,id:pathname.split('/')[2]});
   if (pathname === "/settings/language") {
@@ -1346,7 +1375,8 @@ async function handlePut(pathname, body) {
     }
     const productId = body.product_id !== undefined ? toInt(body.product_id, "product_id") : current.product_id;
     const unitsSold = body.units_sold !== undefined ? toPositiveInt(body.units_sold, "units_sold") : current.units_sold;
-    const unitSellPriceEgp = body.unit_sell_price_egp !== undefined ? toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp") : current.unit_sell_price_egp;
+    const isGift=giftValue(body.is_gift===undefined?current.is_gift:body.is_gift);
+    const unitSellPriceEgp = isGift?0:body.unit_sell_price_egp !== undefined ? toNonNegativeNumber(body.unit_sell_price_egp, "unit_sell_price_egp") : current.unit_sell_price_egp;
     const manufacturingCostPerUnit = body.manufacturing_cost_per_unit !== undefined
       ? toNonNegativeNumber(body.manufacturing_cost_per_unit, "manufacturing_cost_per_unit")
       : Number(current.manufacturing_cost_per_unit ?? 1000);
@@ -1361,6 +1391,7 @@ async function handlePut(pathname, body) {
     const updated = (await updateRows("sales_records", {
       product_id: productId,
       units_sold: unitsSold,
+      is_gift:isGift,delivery_method:deliveryValue(body.delivery_method,current.delivery_method),
       customer_name:body.customer_name!==undefined?String(body.customer_name).trim()||null:current.customer_name,
       customer_phone:body.customer_phone!==undefined?String(body.customer_phone).trim()||null:current.customer_phone,
       unit_sell_price_egp: unitSellPriceEgp,
@@ -1404,6 +1435,7 @@ async function handlePut(pathname, body) {
 async function handleDelete(pathname) {
   if (pathname.startsWith("/suppliers/")) {
     const supplierId = toInt(pathname.split("/")[2], "id");
+    if((await selectRows('shop_purchases',{eq:[['supplier_id',supplierId]]})).length)throw new Error('المورد مرتبط بمشتريات المحل ولا يمكن حذفه');
     if ((await selectRows("components", { eq: [["supplier_id", supplierId]] })).length > 0) {
       throw withStatus(400, "Supplier is referenced by components");
     }

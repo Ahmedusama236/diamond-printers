@@ -137,3 +137,54 @@ test('spare invoices and repair subtypes filter independently and dashboard incl
  const {filterInvoices}=await import('../client/src/salesModel.js'),rows=await db.request('/sales-hub');assert.equal(filterInvoices(rows,{kind:'spare'}).length,1);assert.equal(filterInvoices(rows,{kind:'maintenance',repair_type:'printer'}).length,1);assert.equal(filterInvoices(rows,{kind:'maintenance',repair_type:'device'}).length,1);
  const {dashboardModel}=await import('../client/src/dashboardModel.js'),{DateTime}=require('../client/node_modules/luxon');const m=dashboardModel(await db.request('/dashboard'),'custom','2026-10-20','2026-10-20',DateTime.fromISO('2026-10-20'));assert.equal(m.spareRevenue,50);assert.equal(m.revenue,50);assert.equal(m.buckets[0].spares,50);
 });
+const buyShop=(db,extra={})=>db.request('/shop-purchases','POST',{item_name:'A4 paper',quantity:10,unit_price:30,sell_price:50,received_at:'2026-10-20T10:00:00Z',...extra});
+test('shop purchases create independent stock that never appears in components or manufacturing BOM',async()=>{
+ const db=database();const before=structuredClone(db.data.components);const purchase=await buyShop(db);
+ assert.equal(purchase.shop_item_id,1);const [item]=await db.request('/shop-items');assert.equal(item.stock_qty,10);assert.equal(item.latest_price_egp,30);assert.equal(item.sell_price,50);
+ assert.deepEqual(db.data.components,before);assert.equal((await db.request('/components')).some(i=>i.item_name==='A4 paper'),false);assert.equal((await db.request('/products/1/bom')).some(i=>i.item_name==='A4 paper'),false);
+ assert.equal(db.data.shop_stock_ledger[0].actor,'tester');
+});
+test('shop buying adds stock, editing replaces receipt quantity and rejects reduction of consumed stock',async()=>{
+ const db=database();await buyShop(db);await buyShop(db,{shop_item_id:1,quantity:5,unit_price:35,received_at:'2026-10-21T10:00:00Z'});assert.equal(db.data.shop_items[0].stock_qty,15);
+ await db.request('/shop-purchases/1','PUT',{revision:0,quantity:8,unit_price:30,received_at:'2026-10-20T10:00:00Z'});assert.equal(db.data.shop_items[0].stock_qty,13);assert.equal((await db.request('/shop-items'))[0].latest_price_egp,35);
+ await db.request('/spare-sales','POST',{items:[{shop_item_id:1,quantity:12,unit_price:50}],payment_amount:600,payment_method:'cash'});assert.equal(db.data.shop_items[0].stock_qty,1);
+ await assert.rejects(db.request('/shop-purchases/1','PUT',{revision:1,quantity:1,unit_price:30}),/رصيد المحل/);assert.equal(db.data.shop_items[0].stock_qty,1);assert.equal(db.data.shop_purchases[0].quantity,8);
+ await assert.rejects(db.request('/shop-purchases/1','PUT',{revision:0,quantity:8,unit_price:30}),/اتغيّرت/);
+});
+test('printer gifts force zero sale price, retain real shop cost and deduct stock with saved delivery',async()=>{
+ const db=database();await buyShop(db);const row=await db.request('/printer-sales','POST',printer({delivery_method:'damietta',extra_items:[{shop_item_id:1,item_name:'A4 paper',quantity:2,unit_price:999,is_gift:true,unit_cost_egp:0}],payment_amount:5000,payment_method:'cash'}));
+ assert.equal(row.extra_items[0].unit_price,0);assert.equal(row.extra_items[0].unit_cost_egp,30);assert.equal(row.extra_items[0].is_gift,true);assert.equal(db.data.shop_items[0].stock_qty,8);assert.equal(db.data.components[0].stock_qty,10);
+ const invoice=await db.request('/sales-hub/printer/1');assert.equal(invoice.net,5000);assert.equal(invoice.lines[1].is_gift,true);assert.equal(invoice.delivery_method,'damietta');assert.equal(invoice.balance,0);
+});
+test('printer shop extras edit by replacement, reject overselling and preserve initial cost snapshot',async()=>{
+ const db=database();await buyShop(db);await db.request('/printer-sales','POST',printer({extra_items:[{shop_item_id:1,item_name:'Paper',quantity:2,unit_price:50}],payment_amount:5100,payment_method:'cash'}));
+ await db.request('/shop-purchases','POST',{shop_item_id:1,quantity:1,unit_price:100});
+ const row=await db.request('/printer-sales/1','PUT',{invoice_revision:1,extra_items:[{shop_item_id:1,item_name:'Paper',quantity:4,unit_price:25}],delivery_method:'shipping'});assert.equal(db.data.shop_items[0].stock_qty,7);assert.equal(row.extra_items[0].unit_cost_egp,30);
+ await assert.rejects(db.request('/printer-sales/1','PUT',{invoice_revision:2,extra_items:[{shop_item_id:1,item_name:'Paper',quantity:12,unit_price:25}]}),/رصيد المحل/);assert.equal(db.data.shop_items[0].stock_qty,7);assert.equal(db.data.printer_sales[0].extra_items[0].quantity,4);
+});
+test('returning a gifted printer accessory restores stock with no cash credit; cancellation restores the remainder once',async()=>{
+ const db=database();await buyShop(db);await db.request('/printer-sales','POST',printer({extra_items:[{shop_item_id:1,item_name:'Paper',quantity:3,is_gift:true,unit_price:''}],payment_amount:5000,payment_method:'cash'}));
+ let row=await db.request('/sales-hub/printer/1/return','POST',{revision:1,line_index:1,quantity:1,reason:'Gift returned'});assert.equal(row.balance,0);assert.equal(row.net,5000);assert.equal(row.returns[0].amount,0);assert.equal(db.data.shop_items[0].stock_qty,8);
+ row=await db.request('/sales-hub/printer/1/cancel','POST',{revision:2,reason:'Cancel invoice'});assert.equal(db.data.shop_items[0].stock_qty,10);assert.equal(row.balance,-5000);
+ await assert.rejects(db.request('/sales-hub/printer/1/cancel','POST',{revision:3,reason:'Again'}),/بالفعل/);assert.equal(db.data.shop_items[0].stock_qty,10);
+});
+test('standalone sales can mix shop gifts and component parts without confusing identical IDs',async()=>{
+ const db=database();await buyShop(db);const row=await db.request('/spare-sales','POST',{delivery_method:'mansoura',items:[{shop_item_id:1,quantity:2,is_gift:true,unit_price:900},{component_id:1,quantity:3,unit_price:50}],payment_amount:150,payment_method:'cash'});
+ assert.equal(row.total_amount,150);assert.equal(row.items[0].unit_price,0);assert.equal(db.data.shop_items[0].stock_qty,8);assert.equal(db.data.components[0].stock_qty,7);
+ const returned=await db.request('/sales-hub/spare/1/return','POST',{revision:1,line_index:0,quantity:2,reason:'Shop gift return'});assert.equal(db.data.shop_items[0].stock_qty,10);assert.equal(db.data.components[0].stock_qty,7);assert.equal(returned.balance,0);
+});
+test('gift device has zero revenue but keeps manufacturing cost and stock movement',async()=>{
+ const db=database();const row=await db.request('/sales-records','POST',{product_id:1,units_sold:1,unit_sell_price_egp:5500,is_gift:true,manufacturing_cost_per_unit:1000,payment_amount:0,payment_method:'cash',delivery_method:'shipping'});
+ assert.equal(row.unit_sell_price_egp,0);assert.equal(row.revenue_egp,0);assert.equal(row.total_purchase_cost_egp,1000);assert.equal(row.gross_profit_egp,-1000);assert.equal(row.is_gift,true);assert.equal(db.data.finished_stock[0].stock_qty,9);
+});
+test('delivery filters, unknown legacy delivery and input checks preserve original data',async()=>{
+ const db=database();for(const delivery_method of ['damietta','mansoura','shipping'])await db.request('/printer-sales','POST',printer({delivery_method}));await db.request('/printer-sales','POST',printer());
+ const {filterInvoices}=await import('../client/src/salesModel.js');assert.equal(filterInvoices(await db.request('/sales-hub'),{delivery_method:'shipping'}).length,1);assert.equal((await db.request('/sales-hub/printer/4')).delivery_method,null);
+ await assert.rejects(db.request('/printer-sales','POST',printer({delivery_method:'invalid'})),/طريقة تسليم/);await assert.rejects(db.request('/printer-sales','POST',printer({is_gift:'true'})),/الهدية/);assert.equal(db.data.printer_sales.length,4);
+});
+test('gift toggle restores entered price and client totals ignore any price on gifted lines',async()=>{
+ const {toggleGift}=await import('../client/src/invoiceOptions.js'),{printerInvoiceTotal}=await import('../client/src/printerInvoices.js');
+ const line={unit_price:75,is_gift:false},gift=toggleGift(line);assert.equal(gift.unit_price,0);assert.equal(gift.is_gift,true);assert.equal(toggleGift(gift).unit_price,75);
+ const device=toggleGift({unit_sell_price_egp:5500},'unit_sell_price_egp');assert.equal(device.unit_sell_price_egp,0);assert.equal(toggleGift(device,'unit_sell_price_egp').unit_sell_price_egp,5500);
+ assert.equal(printerInvoiceTotal({quantity:1,unit_price:5000,extra_items:[{quantity:2,unit_price:999,is_gift:true}]}),5000);
+});

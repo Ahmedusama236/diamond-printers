@@ -6,8 +6,10 @@ import { PrintersPage, AccountsPage } from './NewPages';
 import { Overview } from './Overview';
 import {SalesHub} from './SalesHub';
 import {SpareSales} from './SpareSales';
+import {ShopPage} from './ShopPage';
+import {toggleGift} from './invoiceOptions';
 import {repairTypes} from './salesModel';
-import {PaymentFields,InvoiceChecks,paymentPayload} from './InvoiceFields';
+import {PaymentFields,InvoiceChecks,paymentPayload,DeliveryField,GiftButton} from './InvoiceFields';
 import { WorkspaceNavigation, PageIntro } from './Workspace';
 import {DateTime} from 'luxon';
 
@@ -22,6 +24,7 @@ const TABS = [
   "sales",
   "productSales",
   "spareSales",
+  "shop",
   "damaged",
   "maintenance",
   "shortage",
@@ -1133,6 +1136,7 @@ function App() {
 
         {activeTab === 'sales' && <SalesHub api={api} Modal={Modal} DataTable={DataTable}/>}
         {activeTab === 'spareSales' && <SpareSales api={api} Modal={Modal}/>}
+        {activeTab === 'shop' && <ShopPage api={api} Modal={Modal} DataTable={DataTable}/>}
         {activeTab === "productSales" && (
           <SalesTab
             t={t}
@@ -1772,7 +1776,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
   const location=useLocation();
   const editId=new URLSearchParams(location.split('?')[1]||'').get('edit');
   useEffect(()=>{if(!editId)return;const r=records.find(row=>String(row.id)===editId);if(!r)return;setForm({...r,product_id:String(r.product_id),sold_at:toLocalDateTimeValue(r.sold_at),customer_name:r.customer_name||'',customer_phone:r.customer_phone||'',original_total:r.revenue_egp});setShowForm(true);navigate('/sales/products');},[editId,records]);
-  const total=Number(form.units_sold||1)*Number(form.unit_sell_price_egp||0);
+  const total=form.is_gift?0:Number(form.units_sold||1)*Number(form.unit_sell_price_egp||0);
   const change=(key,value)=>setForm(s=>({...s,[key]:value}));
   return (
     <section className="salesSection">
@@ -1808,6 +1812,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
               manufacturing_cost_per_unit: Number(form.manufacturing_cost_per_unit),
               sold_at: form.sold_at || undefined,
               customer_name:form.customer_name||'',customer_phone:form.customer_phone||'',invoice_revision:form.invoice_revision??0,
+              is_gift:Boolean(form.is_gift),delivery_method:form.delivery_method||null,
               ...paymentPayload(form,total),
             };
             if (form.id) {
@@ -1846,6 +1851,7 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
           step="0.01"
           placeholder={t("unitSellPrice")}
           required
+          disabled={Boolean(form.is_gift)}
           value={form.unit_sell_price_egp}
           onChange={(e) => setForm((s) => ({ ...s, unit_sell_price_egp: e.target.value }))}
         />
@@ -1867,6 +1873,8 @@ function SalesTab({ t, products, form, setForm, records, run, api, refreshAll })
         />
         <label>اسم العميل {form.payment_mode&&form.payment_mode!=='paid'?'(مطلوب للمبلغ المتبقي)':'(اختياري)'}<input required={form.payment_mode&&form.payment_mode!=='paid'} value={form.customer_name||''} onChange={e=>change('customer_name',e.target.value)}/></label>
         <label>الهاتف (اختياري)<input type="tel" value={form.customer_phone||''} onChange={e=>change('customer_phone',e.target.value)}/></label>
+        <GiftButton gift={form.is_gift} onClick={()=>setForm(s=>toggleGift(s,'unit_sell_price_egp'))}/>
+        <DeliveryField form={form} change={change}/>
         {!form.id&&<PaymentFields form={form} change={change} total={total}/>}
         <InvoiceChecks form={form} total={total} originalTotal={form.original_total??form.revenue_egp}/>
         <div className="printerInvoiceTotal">إجمالي الفاتورة: <strong>{total.toLocaleString('ar-EG')} جنيه</strong></div>
@@ -2355,6 +2363,7 @@ function ReportsTab({ t, reportParams, setReportParams, reportData, setReportDat
             <Metric label="تكلفة قطع الغيار المباعة" value={reportData.summary.spare_cost_egp}/>
             <Metric label="ربح قطع الغيار" value={reportData.summary.spare_profit_egp}/>
             <Metric label="فواتير قطع غيار بتكلفة غير مكتملة" value={reportData.summary.spare_incomplete_cost_invoices}/>
+            <Metric label="تكلفة هدايا المحل مع الطابعات" value={reportData.summary.printer_shop_gifts_cost_egp}/>
             <Metric label="إجمالي ربح الأجهزة وقطع الغيار والصيانة" value={reportData.summary.total_profit_with_maintenance_egp} />
             <Metric label={t("deliveredMaintenanceCount")} value={reportData.summary.delivered_maintenance_count} />
             <Metric label={t("margin")} value={reportData.summary.avg_margin_pct} />

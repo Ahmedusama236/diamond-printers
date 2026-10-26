@@ -3,7 +3,7 @@ import {paths,navigate} from './navigation';
 
 const groups=[
   {label:['الرئيسية','Workspace'],items:[['dashboard','لوحة التحكم','Overview','grid']]},
-  {label:['البيع','Sales'],items:[['sales','المبيعات والتحصيل','Sales & payments','receipt']]},
+  {label:['البيع','Sales'],items:[['sales','المبيعات والتحصيل','Sales & payments','receipt'],['shop','مشتريات ومخزون المحل','Shop purchases & stock','cart']]},
   {label:['المخزون والمشتريات','Inventory & purchasing'],items:[['components','المكونات والمخزون','Components & stock','box'],['purchases','المشتريات','Purchases','cart'],['suppliers','الموردون','Suppliers','users'],['shortage','النواقص','Shortages','alert'],['damaged','التالف','Damaged items','box']]},
   {label:['الإنتاج والخدمة','Production & service'],items:[['productsBom','المنتجات ومكوناتها','Products & materials','layers'],['manufacturing','التصنيع','Manufacturing','tool'],['maintenance','الصيانة','Maintenance','tool']]},
   {label:['الإدارة','Management'],items:[['reports','التقارير','Reports','chart'],['settings','الإعدادات','Settings','settings']]},

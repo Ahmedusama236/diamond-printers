@@ -1,5 +1,5 @@
 import {invoiceSource,decorateInvoice,cash} from './salesModel.js';
-export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,updateComponentStock,insertLedger,actor='مستخدم',nowIso,toUtcIsoFromInput}){
+export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRows,updateFinishedStock,updateComponentStock,moveShopStock,insertLedger,actor='مستخدم',nowIso,toUtcIsoFromInput}){
  const sourceTables={product:'sales_records',printer:'printer_sales',spare:'spare_sales',maintenance:'maintenance_tickets'};
  const eq=(kind,id)=>[['kind',kind],['source_id',id]];
  const positive=(value,label)=>{const n=Number(value);if(value===''||value==null||!Number.isFinite(n)||n<=0)throw new Error(`أدخل ${label} أكبر من صفر`);return n;};
@@ -13,7 +13,7 @@ export function createInvoiceLedger({selectRows,selectSingle,insertRow,updateRow
  async function get(kind,id){const row=(await list()).find(r=>r.kind===kind&&r.source_id===id);if(!row)throw new Error('الفاتورة غير موجودة');return row;}
  async function metaFor(kind,id){let meta=await selectSingle('sales_invoice_meta',{eq:eq(kind,id)});if(!meta)meta=await insertRow('sales_invoice_meta',{kind,source_id:id,payment_reviewed:false,revision:0,cancelled:false});return meta;}
  async function touch(meta){await updateRows('sales_invoice_meta',{revision:meta.revision+1},[['id',meta.id]]);}
- async function restore(row,qty,referenceId,referenceType='sales_return',index=0){if(!qty)return;if(row.kind==='product'){await updateFinishedStock(row.source.product_id,qty);await insertLedger({itemType:'finished',itemId:row.source.product_id,deltaQty:qty,reason:'adjustment',referenceType,referenceId});}if(row.kind==='spare'){const componentId=row.lines[index].component_id;await updateComponentStock(componentId,qty);await insertLedger({itemType:'component',itemId:componentId,deltaQty:qty,reason:'adjustment',referenceType,referenceId});}}
+ async function restore(row,qty,referenceId,referenceType='sales_return',index=0){if(!qty)return;const line=row.lines[index];if(line.shop_item_id&&['printer','spare'].includes(row.kind)){await moveShopStock(line.shop_item_id,qty,referenceType,referenceId,'return');return;}if(row.kind==='product'){await updateFinishedStock(row.source.product_id,qty);await insertLedger({itemType:'finished',itemId:row.source.product_id,deltaQty:qty,reason:'adjustment',referenceType,referenceId});}if(row.kind==='spare'){const componentId=line.component_id;await updateComponentStock(componentId,qty);await insertLedger({itemType:'component',itemId:componentId,deltaQty:qty,reason:'adjustment',referenceType,referenceId});}}
  async function mutate(kind,id,action,body){
   let row=await get(kind,id);const meta=await metaFor(kind,id);
   if(Number(body.revision)!==meta.revision)throw new Error('الفاتورة اتغيّرت؛ حدّث البيانات وراجعها قبل الحفظ');

@@ -3,6 +3,7 @@ const { ensureAuth, currentUser } = require('../lib/auth');
 const {runMigration} = require('../lib/migrations');
 const {salesSchemaStatements} = require('../lib/sales-schema');
 const {saleTypesSchema} = require('../lib/sale-types-schema');
+const {shopSchema} = require('../lib/shop-schema');
 
 const TABLES = new Set([
   "suppliers",
@@ -117,6 +118,7 @@ async function ensureSchema(database) {
   ]);
   await runMigration(database,'unified_sales_20261025_v1',salesSchemaStatements);
   await runMigration(database,'sale_repair_types_20261025_v1',saleTypesSchema);
+  await runMigration(database,'shop_gifts_delivery_20261026_v1',shopSchema);
   schemaReady = true;
 }
 

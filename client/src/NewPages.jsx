@@ -3,7 +3,8 @@ import {DateTime} from 'luxon';
 import {navigate,useLocation} from './navigation';
 import {newPrinterInvoice,newPrinterExtra,editPrinterInvoice,printerInvoiceTotal,filterPrinterSales} from './printerInvoices';
 import {SerialScannerButton} from './SerialScanner';
-import {PaymentFields,InvoiceChecks,paymentPayload} from './InvoiceFields';
+import {PaymentFields,InvoiceChecks,paymentPayload,DeliveryField,GiftButton} from './InvoiceFields';
+import {toggleGift} from './invoiceOptions';
 const zone='Africa/Cairo';
 const money=value=>Number(value || 0).toLocaleString('ar-EG',{maximumFractionDigits:2});
 
@@ -56,6 +57,8 @@ export function PrintersPage({api,Modal,DataTable}) {
   const history=location.startsWith('/printers/sales');
   const [rows,setRows]=useState([]),[form,setForm]=useState(null),[saving,setSaving]=useState(false),[error,setError]=useState('');
   const lock=useRef(false);
+  const [shopItems,setShopItems]=useState([]);
+  useEffect(()=>{api.get('/shop-items').then(setShopItems).catch(e=>setError(e.message));},[api]);
   useEffect(()=>{const p=new URLSearchParams(location.split('?')[1]||'');if(p.get('new')==='1'){setForm(newPrinterInvoice());navigate('/printers/sell');}if(p.get('edit')){api.get('/printer-sales').then(data=>{const row=data.find(r=>String(r.id)===p.get('edit'));if(row)setForm(editPrinterInvoice(row));else setError('الفاتورة غير موجودة');navigate('/printers/sell');}).catch(e=>setError(e.message));}},[location]);
   const [filters,setFilters]=useState({from:'',to:'',q:''});
   const load=async()=>{setRows(await api.get('/printer-sales'));};
@@ -82,20 +85,22 @@ export function PrintersPage({api,Modal,DataTable}) {
         {error&&<div className="error">{error}</div>}
         <label>الصنف<input required value={form.item_name} onChange={e=>change('item_name',e.target.value)}/></label>
         <label>العدد<input type="number" min="1" step="1" placeholder="1" value={form.quantity} onChange={e=>change('quantity',e.target.value)} onBlur={()=>{if(form.quantity==='')change('quantity',1);}}/></label>
-        <label>سعر الوحدة<input type="number" required min="0" step="0.01" value={form.unit_price} onChange={e=>change('unit_price',e.target.value)}/></label>
+        <div className="giftPriceField"><label>سعر الوحدة<input type="number" required min="0" step="0.01" disabled={Boolean(form.is_gift)} value={form.unit_price} onChange={e=>change('unit_price',e.target.value)}/></label><GiftButton gift={form.is_gift} onClick={()=>setForm(s=>toggleGift(s))}/></div>
         <label>العداد (اختياري)<input type="number" min="0" step="1" value={form.counter} onChange={e=>change('counter',e.target.value)}/></label>
         <div className="serialNumberField"><label htmlFor="printer-serial-number">السريل نامبر (اختياري)</label><div className="serialNumberInput"><input id="printer-serial-number" type="text" dir="ltr" value={form.serial_number} onChange={e=>change('serial_number',e.target.value)}/><SerialScannerButton Modal={Modal} disabled={saving} onDetected={value=>change('serial_number',value)}/></div></div>
         <fieldset className="printerExtras" disabled={saving}>
           <div className="printerExtrasHeader"><div><h4>أصناف مع الطابعة</h4><p>ورق، حبر، كابل أو أي صنف اشتراه العميل</p></div><button type="button" disabled={saving||form.extra_items.length>=50} onClick={()=>setForm(s=>({...s,extra_items:[...s.extra_items,newPrinterExtra()]}))}>＋ إضافة صنف</button></div>
           {form.extra_items.map((item,index)=><article className="printerExtraLine" key={item._key}>
-            <div className="printerExtraLineHeader"><strong>صنف إضافي {index+1}</strong><button type="button" className="removePrinterExtra" aria-label={`إزالة الصنف الإضافي ${index+1}`} title="إزالة الصنف" onClick={()=>setForm(s=>({...s,extra_items:s.extra_items.filter(row=>row._key!==item._key)}))}>×</button></div>
-            <div className="printerExtraFields"><label>اسم الصنف<input required placeholder="مثال: ورق A4" value={item.item_name} onChange={e=>changeExtra(item._key,'item_name',e.target.value)}/></label><label>العدد<input type="number" min="1" step="1" placeholder="1" value={item.quantity} onChange={e=>changeExtra(item._key,'quantity',e.target.value)} onBlur={()=>{if(item.quantity==='')changeExtra(item._key,'quantity',1);}}/></label><label>سعر الوحدة<input type="number" required min="0" step="0.01" value={item.unit_price} onChange={e=>changeExtra(item._key,'unit_price',e.target.value)}/></label></div>
+            <div className="printerExtraLineHeader"><strong>صنف إضافي {index+1}</strong><div className="extraLineActions"><GiftButton gift={item.is_gift} onClick={()=>setForm(s=>({...s,extra_items:s.extra_items.map(row=>row._key===item._key?toggleGift(row):row)}))}/><button type="button" className="removePrinterExtra" aria-label={`إزالة الصنف الإضافي ${index+1}`} title="إزالة الصنف" onClick={()=>setForm(s=>({...s,extra_items:s.extra_items.filter(row=>row._key!==item._key)}))}>×</button></div></div>
+            <label className="shopExtraPicker">من مخزون المحل<select value={item.shop_item_id||''} onChange={e=>{const good=shopItems.find(i=>i.id===Number(e.target.value));setForm(s=>({...s,extra_items:s.extra_items.map(row=>row._key===item._key?{...row,shop_item_id:good?.id||'',item_name:good?.item_name||'',unit_price:row.is_gift?0:good?.sell_price??''}:row)}));}}><option value="">صنف يدوي — بدون خصم من المخزون</option>{shopItems.map(i=><option key={i.id} value={i.id}>{i.item_name} — متاح {i.stock_qty}</option>)}</select></label>
+            <div className="printerExtraFields"><label>اسم الصنف<input required disabled={Boolean(item.shop_item_id)} placeholder="مثال: ورق A4" value={item.item_name} onChange={e=>changeExtra(item._key,'item_name',e.target.value)}/></label><label>العدد<input type="number" min="1" step="1" placeholder="1" value={item.quantity} onChange={e=>changeExtra(item._key,'quantity',e.target.value)} onBlur={()=>{if(item.quantity==='')changeExtra(item._key,'quantity',1);}}/></label><label>سعر الوحدة<input type="number" required min="0" step="0.01" disabled={Boolean(item.is_gift)} value={item.unit_price} onChange={e=>changeExtra(item._key,'unit_price',e.target.value)}/></label></div>
             <p className="printerExtraSubtotal">إجمالي الصنف: {money(printerInvoiceTotal(item))} جنيه</p>
           </article>)}
         </fieldset>
         <label>هاتف العميل (اختياري)<input type="tel" value={form.customer_phone} onChange={e=>change('customer_phone',e.target.value)}/></label>
         <label>اسم العميل {form.payment_mode&&form.payment_mode!=='paid'?'(مطلوب للمبلغ المتبقي)':'(اختياري)'}<input required={form.payment_mode&&form.payment_mode!=='paid'} value={form.customer_name} onChange={e=>change('customer_name',e.target.value)}/></label>
         <label>التاريخ والوقت — القاهرة<input type="datetime-local" required step="1" value={form.sold_at} onChange={e=>change('sold_at',e.target.value)}/></label>
+        <DeliveryField form={form} change={change}/>
         {!form.id&&<PaymentFields form={form} change={change} total={printerInvoiceTotal(form)}/>}
         <InvoiceChecks form={form} total={printerInvoiceTotal(form)} originalTotal={form.original_total}/>
         <div className="printerInvoiceTotal"><span>إجمالي الفاتورة</span><strong>{money(printerInvoiceTotal(form))} جنيه</strong></div>
