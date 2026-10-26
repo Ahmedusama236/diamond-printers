@@ -1525,6 +1525,46 @@ async function handleDelete(pathname) {
   throw withStatus(404, `Route not found: DELETE ${pathname}`);
 }
 
+async function purgeSalesInvoice(kind,id,body){
+  const invoice=await invoices.get(kind,id),meta=invoice.meta;
+  if(body.confirm_number!==invoice.number)throw new Error(`اكتب رقم الفاتورة ${invoice.number} لتأكيد الحذف النهائي`);
+  if(Number(body.revision)!==(meta?.revision||0))throw new Error('الفاتورة اتغيّرت؛ افتحها من جديد قبل الحذف');
+  const references=[];
+  const remaining=line=>invoice.state==='cancelled'?0:line.quantity-line.returned;
+  if(kind==='product'){
+    const quantity=remaining(invoice.lines[0]);
+    if(quantity)await updateFinishedStock(invoice.source.product_id,quantity);
+    references.push(['inventory_ledger','sale',id]);
+  }else if(kind==='printer'||kind==='spare'){
+    for(const line of invoice.lines){
+      const quantity=remaining(line);
+      if(!quantity)continue;
+      if(line.shop_item_id)await shop.move(line.shop_item_id,quantity,'invoice_purge',id,'restore');
+      else if(kind==='spare'&&line.component_id)await updateComponentStock(line.component_id,quantity);
+    }
+    references.push(kind==='printer'?['shop_stock_ledger','printer_sale',id]:['inventory_ledger','spare_sale',id]);
+    if(kind==='spare')references.push(['shop_stock_ledger','spare_sale',id]);
+  }else if(kind==='maintenance'){
+    const parts=await selectRows('maintenance_parts',{eq:[['ticket_id',id]]});
+    for(const part of parts){
+      await reverseLedgerForReference('maintenance_part',part.id);
+      references.push(['inventory_ledger','maintenance_part',part.id]);
+      await deleteRows('maintenance_parts',[['id',part.id]]);
+    }
+  }
+  const returns=meta?await selectRows('sales_returns',{eq:[['invoice_id',meta.id]]}):[];
+  for(const row of returns){references.push(['inventory_ledger','sales_return',row.id],['shop_stock_ledger','sales_return',row.id]);}
+  if(meta)references.push(['inventory_ledger','sales_cancellation',meta.id],['shop_stock_ledger','sales_cancellation',meta.id]);
+  for(const [table,type,referenceId] of references)await deleteRows(table,[['reference_type',type],['reference_id',referenceId]]);
+  if(kind==='printer'||kind==='spare')await deleteRows('shop_stock_ledger',[['reference_type','invoice_purge'],['reference_id',id]]);
+  if(meta){
+    for(const table of ['sales_events','sales_payments','sales_returns'])await deleteRows(table,[['invoice_id',meta.id]]);
+    await deleteRows('sales_invoice_meta',[['id',meta.id]]);
+  }
+  await deleteRows(invoices.sourceTables[kind],[['id',id]]);
+  return {success:true,deleted:invoice.number};
+}
+
 async function request(path, options = {}) {
   const method = (options.method || "GET").toUpperCase();
   const body = options.body ? JSON.parse(options.body) : {};
@@ -1532,6 +1572,9 @@ async function request(path, options = {}) {
   if (pathname.startsWith('/auth/') || pathname.startsWith('/accounts')) throw withStatus(404, 'Route not found');
   if(method==='POST'&&/^\/sales-hub\/(product|printer|spare|maintenance)\/\d+\/(review|payment|return|cancel)$/.test(pathname)){
     const [,,kind,id,action]=pathname.split('/');return invoices.mutate(kind,Number(id),action,body);
+  }
+  if(method==='POST'&&/^\/sales-hub\/(product|printer|spare|maintenance)\/\d+\/purge$/.test(pathname)){
+    const [,,kind,id]=pathname.split('/');return purgeSalesInvoice(kind,Number(id),body);
   }
   const match=pathname.match(/^\/(sales-records|printer-sales|spare-sales|maintenance-tickets)(?:\/(\d+))?$/);
   // Production operations always supply the authenticated actor. Read helpers can run independently.

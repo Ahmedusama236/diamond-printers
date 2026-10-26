@@ -6,6 +6,7 @@ function database(seed={}){
   if(input.action==='select'){found=structuredClone(found);if(input.order)found.sort((a,b)=>{for(const [k,asc]of input.order){if(a[k]!==b[k])return(a[k]>b[k]?1:-1)*(asc?1:-1);}return 0;});return input.limit?found.slice(0,input.limit):found;}
   if(input.action==='insert'){const row={id:Math.max(0,...rows.map(r=>r.id||0))+1,created_at:new Date().toISOString(),...structuredClone(input.payload)};rows.push(row);return [structuredClone(row)];}
   if(input.action==='update'){found.forEach(r=>Object.assign(r,structuredClone(input.payload)));return structuredClone(found);}
+  if(input.action==='delete'){data[input.table]=rows.filter(row=>!found.includes(row));return structuredClone(found);}
   throw new Error('Unexpected mutation');
  }
  return {get data(){return data;},async request(path,method='GET',body={}){const snapshot=structuredClone(data);try{return await createBusiness(adapter,{actor:'tester'}).request(path,{method,body:JSON.stringify(body)});}catch(e){data=snapshot;throw e;}}};
@@ -18,6 +19,40 @@ test('legacy invoices are unified once, retain optional fields and never invent 
 test('new invoice and initial collection commit together and insufficient customer data rolls back',async()=>{
  const db=database();await assert.rejects(db.request('/printer-sales','POST',printer({payment_amount:1000,payment_method:'cash'})),/اسم العميل/);assert.equal(db.data.printer_sales.length,0);assert.equal(db.data.sales_invoice_meta.length,0);
  const result=await db.request('/printer-sales','POST',printer({payment_amount:1000,payment_method:'cash',customer_name:'Client'}));const [row]=await db.request('/sales-hub');assert.equal(result.id,1);assert.equal(row.paid,1000);assert.equal(row.balance,4000);assert.equal(row.payment_state,'partial');assert.equal(db.data.sales_events.length,2);
+});
+test('permanent invoice deletion requires its number and removes payment history',async()=>{
+ const db=database();await db.request('/printer-sales','POST',printer({payment_amount:1000,payment_method:'cash',customer_name:'Client'}));
+ await assert.rejects(db.request('/sales-hub/printer/1/purge','POST',{revision:1,confirm_number:'P-2'}),/اكتب رقم الفاتورة/);
+ assert.equal(db.data.printer_sales.length,1);
+ const result=await db.request('/sales-hub/printer/1/purge','POST',{revision:1,confirm_number:'P-1'});
+ assert.equal(result.deleted,'P-1');assert.equal(db.data.printer_sales.length,0);assert.equal(db.data.sales_invoice_meta.length,0);
+ assert.equal(db.data.sales_payments.length,0);assert.equal(db.data.sales_events.length,0);assert.equal((await db.request('/sales-hub')).length,0);
+});
+test('deleting a partly returned sale restores only unsold stock and removes its ledger rows',async()=>{
+ const db=database();await db.request('/sales-records','POST',{product_id:1,units_sold:3,unit_sell_price_egp:100,payment_amount:300,payment_method:'cash'});
+ assert.equal(db.data.finished_stock[0].stock_qty,7);
+ await db.request('/sales-hub/product/1/return','POST',{revision:1,line_index:0,quantity:1,reason:'مرتجع'});
+ assert.equal(db.data.finished_stock[0].stock_qty,8);
+ await db.request('/sales-hub/product/1/purge','POST',{revision:2,confirm_number:'M-1'});
+ assert.equal(db.data.finished_stock[0].stock_qty,10);assert.equal(db.data.inventory_ledger.length,0);
+ assert.equal(db.data.sales_records.length,0);assert.equal(db.data.sales_returns.length,0);
+});
+test('deleting an already cancelled invoice does not restore stock twice',async()=>{
+ const db=database();await db.request('/sales-records','POST',{product_id:1,units_sold:2,unit_sell_price_egp:100,payment_amount:200,payment_method:'cash'});
+ await db.request('/sales-hub/product/1/cancel','POST',{revision:1,reason:'إلغاء'});
+ assert.equal(db.data.finished_stock[0].stock_qty,10);
+ await db.request('/sales-hub/product/1/purge','POST',{revision:2,confirm_number:'M-1'});
+ assert.equal(db.data.finished_stock[0].stock_qty,10);assert.equal(db.data.inventory_ledger.length,0);
+});
+test('deleting a maintenance invoice removes its ticket and parts and restores consumed components',async()=>{
+ const db=database();const ticket=await db.request('/maintenance-tickets','POST',{device_type:'printer',customer_name:'Client',device_issue:'Repair'});
+ await db.request(`/maintenance-tickets/${ticket.id}/parts`,'POST',{component_id:1,qty_used:2});
+ await db.request(`/maintenance-tickets/${ticket.id}`,'PUT',{status:'completed',repair_charge_egp:200});
+ assert.equal(db.data.components[0].stock_qty,8);
+ const invoice=await db.request('/sales-hub/maintenance/1');
+ await db.request('/sales-hub/maintenance/1/purge','POST',{revision:invoice.meta.revision,confirm_number:'R-1'});
+ assert.equal(db.data.components[0].stock_qty,10);assert.equal(db.data.maintenance_tickets.length,0);
+ assert.equal(db.data.maintenance_parts.length,0);assert.equal(db.data.inventory_ledger.length,0);
 });
 test('collections reject overpayment, stale revisions and future dates without partial writes',async()=>{
  const db=database();await db.request('/printer-sales','POST',printer({payment_amount:0,payment_method:'cash',customer_name:'Client'}));
@@ -152,6 +187,16 @@ test('spare invoices and repair subtypes filter independently and dashboard incl
  const {dashboardModel}=await import('../client/src/dashboardModel.js'),{DateTime}=require('../client/node_modules/luxon');const m=dashboardModel(await db.request('/dashboard'),'custom','2026-10-20','2026-10-20',DateTime.fromISO('2026-10-20'));assert.equal(m.spareRevenue,50);assert.equal(m.revenue,50);assert.equal(m.buckets[0].spares,50);
 });
 const buyShop=(db,extra={})=>db.request('/shop-purchases','POST',{item_name:'A4 paper',quantity:10,unit_price:30,sell_price:50,received_at:'2026-10-20T10:00:00Z',...extra});
+test('permanent deletion restores tracked shop supplies and removes their sale history',async()=>{
+ const db=database();await buyShop(db);
+ await db.request('/printer-sales','POST',printer({extra_items:[{shop_item_id:1,item_name:'A4 paper',quantity:3,unit_price:50}],payment_amount:5150,payment_method:'cash'}));
+ assert.equal(db.data.shop_items[0].stock_qty,7);
+ await db.request('/sales-hub/printer/1/return','POST',{revision:1,line_index:1,quantity:1,reason:'مرتجع'});
+ assert.equal(db.data.shop_items[0].stock_qty,8);
+ await db.request('/sales-hub/printer/1/purge','POST',{revision:2,confirm_number:'P-1'});
+ assert.equal(db.data.shop_items[0].stock_qty,10);assert.equal(db.data.printer_sales.length,0);
+ assert.equal(db.data.shop_stock_ledger.filter(r=>r.reference_type!=='shop_purchase').length,0);
+});
 test('shop purchases create independent stock that never appears in components or manufacturing BOM',async()=>{
  const db=database();const before=structuredClone(db.data.components);const purchase=await buyShop(db);
  assert.equal(purchase.shop_item_id,1);const [item]=await db.request('/shop-items');assert.equal(item.stock_qty,10);assert.equal(item.latest_price_egp,30);assert.equal(item.sell_price,50);
